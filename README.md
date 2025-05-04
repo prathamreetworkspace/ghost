@@ -162,4 +162,4 @@ If you encounter errors like `Failed to connect to signaling server`, `xhr poll 
     5.  **Message Broadcasting Logic:** Check the `broadcastMessage` function in `webrtc.ts` and its logs.
 
 -   **Dependencies:** Ensure dependencies are installed (`npm install`). Sometimes deleting `node_modules` and `package-lock.json` (or `yarn.lock`) and running `npm install` again helps.
-```
+```# ghost
