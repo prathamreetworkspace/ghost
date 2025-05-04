@@ -165,7 +165,7 @@ export function connect(
                 let errorReason = reason;
                 if (reason === 'transport close') errorReason = 'Connection lost (transport closed)';
                 if (reason === 'ping timeout') errorReason = 'Connection timed out';
-                onErrorCallback(`Lost connection to signaling server: ${errorReason}.`);
+                onErrorCallback(`Lost connection to signaling server: ${errorReason}. Check server status and logs.`); // Added hint
              }
              // Ensure cleanup happens regardless of the reason
              cleanup();
@@ -307,7 +307,7 @@ export function connect(
             console.error('Generic Socket error:', error);
             // Avoid redundant error messages if already handled by connect_error or disconnect
             if (_isConnected) { // Only report if we thought we were connected
-                 onErrorCallback(`Signaling server communication error: ${error.message || error}`);
+                 onErrorCallback(`Signaling server communication error: ${error.message || error}. Check server logs.`); // Added hint
                  // Consider if cleanup is needed depending on the error type and state
                  cleanup(); // Be safe and cleanup on unknown errors
                  onDisconnectedCallback(); // Ensure UI resets
@@ -320,21 +320,25 @@ export function connect(
  * Disconnects from the signaling server and closes all peer connections.
  * This is the function the UI should call when the user explicitly leaves.
  */
-export function disconnect(): void {
-    console.log('User initiated disconnect...');
-    if (!socket && !_isConnected) {
-        console.warn('Disconnect called but not connected.');
-        return; // Nothing to do
-    }
-    const wasConnected = _isConnected; // Capture state before cleanup
-    _isConnected = false; // Set immediately to prevent race conditions
-    cleanup(); // Perform all necessary cleanup
+export function disconnect(): Promise<void> { // Return a promise for consistency
+     return new Promise((resolve) => {
+         console.log('User initiated disconnect...');
+         if (!socket && !_isConnected) {
+             console.warn('Disconnect called but not connected.');
+             resolve(); // Nothing to do
+             return;
+         }
+         const wasConnected = _isConnected; // Capture state before cleanup
+         _isConnected = false; // Set immediately to prevent race conditions
+         cleanup(); // Perform all necessary cleanup
 
-    // Only call the disconnect callback if we were actually connected,
-    // prevents duplicate calls if cleanup was triggered by an error first.
-    if (wasConnected) {
-         onDisconnectedCallback(); // Notify the UI that disconnection is complete
-    }
+         // Only call the disconnect callback if we were actually connected,
+         // prevents duplicate calls if cleanup was triggered by an error first.
+         if (wasConnected) {
+              onDisconnectedCallback(); // Notify the UI that disconnection is complete
+         }
+         resolve(); // Resolve after cleanup
+     });
 }
 
 /**
@@ -488,7 +492,7 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
                 break;
             case 'failed':
                 console.error(`WebRTC connection with ${peerId} failed.`);
-                onErrorCallback(`Connection attempt with a peer failed.`);
+                onErrorCallback(`Connection attempt with a peer failed. Check network or STUN/TURN server configuration.`); // Added hint
                 closePeerConnection(peerId); // Clean up failed connection immediately
                 break;
             case 'disconnected':

@@ -72,7 +72,7 @@ This is a Next.js application demonstrating a real-time peer-to-peer (P2P) chat 
     # This MUST match the address the signaling server is listening on (e.g., PORT 3001 in the example above).
     NEXT_PUBLIC_SIGNALING_SERVER_URL=http://localhost:3001
     ```
-    If this variable is not set, the app defaults to `http://localhost:3001`. **Verify this value carefully.**
+    If this variable is not set, the app defaults to `http://localhost:3001`. **Verify this value carefully.** The URL used will be logged in the browser console when the app starts.
 
 4.  **Run the Development Server:**
     ```bash
@@ -110,20 +110,56 @@ This is a Next.js application demonstrating a real-time peer-to-peer (P2P) chat 
 
 ## Troubleshooting
 
--   **Connection Errors (`xhr poll error`, `timeout`, `Connection refused`, `ERR_CONNECTION_REFUSED`, `transport close`, etc.):**
-    1.  **Is the signaling server actually running?** Check the terminal window where you started it. Does it explicitly say it's listening on the expected port (e.g., 3001)? Are there any startup errors logged?
-    2.  **Is the `NEXT_PUBLIC_SIGNALING_SERVER_URL` in `.env.local` correct?** Ensure the protocol (`http`), hostname (`localhost`), and port (`3001` or your chosen port) **exactly** match the running signaling server's address. A typo here is common. Restart the Next.js app (`npm run dev`) after changing `.env.local`.
-    3.  **Did you configure CORS correctly on the signaling server?** This is the **most common cause** of `xhr poll error`. The server *must* explicitly allow the origin of your Next.js app (`http://localhost:9002` by default). Refer to the CORS setup example in Step 2. Double-check the allowed origin in your signaling server code. Restart the signaling server after changes.
-    4.  **Check Browser Developer Console:** Open the developer tools in your browser (usually F12).
-        *   **Console Tab:** Look for detailed error messages related to Socket.IO, WebRTC, or network requests. Errors like `WebSocket connection to 'ws://...' failed` point to direct connection issues.
-        *   **Network Tab:** Filter for requests to your signaling server URL (e.g., `localhost:3001`). Are the requests failing (e.g., status 404, 500, CORS error)? Check the response headers for CORS issues (`Access-Control-Allow-Origin`).
-    5.  **Check Signaling Server Logs:** Add extensive `console.log` statements inside your signaling server's event handlers (`connection`, `join`, `offer`, `answer`, `ice-candidate`, `disconnect`). Are connections being established? Are messages being received and forwarded correctly? This is essential for debugging signaling flow.
-    6.  **Firewall/Network Issues:** Ensure no firewall on your system or network is blocking the connection to the signaling server port (e.g., 3001).
-    7.  **Try a Different Browser:** Sometimes browser extensions or specific browser settings can interfere.
+**Common Connection Errors & Solutions:**
+
+If you encounter errors like `Failed to connect to signaling server`, `xhr poll error`, `websocket error`, `timeout`, `Connection refused`, `ERR_CONNECTION_REFUSED`, `transport close`, etc., follow these steps carefully:
+
+1.  **Is the Signaling Server RUNNING?**
+    *   **Check the terminal:** Go to the terminal window where you started your *separate* signaling server.
+    *   **Is it listening?** Does it explicitly log a message like `Signaling server listening on port 3001`?
+    *   **Any startup errors?** Check for errors logged when the signaling server started. Fix them first.
+
+2.  **Is the Signaling Server URL CORRECT?**
+    *   **Check `.env.local`:** Open the `.env.local` file in your Next.js project root.
+    *   **Verify `NEXT_PUBLIC_SIGNALING_SERVER_URL`:** Ensure the protocol (`http`), hostname (`localhost`), and port (`3001` or your chosen port) **exactly** match the address your signaling server is listening on. Typos are very common.
+    *   **Check Browser Console:** The Next.js app logs the URL it's trying to use when it starts (`Using signaling server URL: ...`). Does this match your running server?
+    *   **Restart Next.js:** If you changed `.env.local`, you **must** restart the Next.js development server (`npm run dev`) for the changes to take effect.
+
+3.  **Is Signaling Server CORS Configured CORRECTLY? (Most Common Issue!)**
+    *   **What is CORS?** Cross-Origin Resource Sharing. Your signaling server (e.g., running on `localhost:3001`) needs to explicitly tell browsers it's okay to accept connections from your Next.js app (running on `localhost:9002`).
+    *   **Check Signaling Server Code:** Look at your signaling server's `new Server(httpServer, { cors: { ... } })` configuration.
+    *   **Verify `origin`:** The `origin` value in the CORS config *must* exactly match the origin of your Next.js app, including the port (`http://localhost:9002`). Using `"*"` is insecure and might still cause issues depending on browser settings; be specific. See the example in Step 2 of "Getting Started".
+    *   **Restart Signaling Server:** After changing CORS settings, **restart your signaling server**.
+
+4.  **Check Browser Developer Console (Network Tab):**
+    *   Open Developer Tools (F12) in your browser.
+    *   Go to the **Network** tab.
+    *   Filter for requests to your signaling server URL (e.g., `localhost:3001`).
+    *   Look for **failed requests** (status 4xx, 5xx, or `(failed)`).
+    *   **Click on a failed request.** Check the **Headers** tab. Look for `Access-Control-Allow-Origin`. If it's missing or doesn't match `http://localhost:9002`, it's a CORS problem (Step 3). If the status is 404 (Not Found), the URL might be wrong (Step 2). If it's 500 (Server Error), check the signaling server logs (Step 5). If it says `ERR_CONNECTION_REFUSED`, the server isn't running or is blocked (Step 1 or 6).
+
+5.  **Check Signaling Server LOGS:**
+    *   **Add `console.log` statements:** Add logging inside *all* your signaling server's event handlers (`connection`, `join`, `offer`, `answer`, `ice-candidate`, `disconnect`).
+    *   **Observe Output:** When you try to connect from the Next.js app, what does the signaling server log?
+        *   Does it log `Socket ... connected`? If not, the connection isn't even reaching the server (check URL, firewall, CORS).
+        *   Does it log receiving the `join` event?
+        *   When errors occur, are there any specific error messages logged *on the server side*? This is crucial for debugging server issues.
+
+6.  **Firewall/Network Issues:**
+    *   Ensure no firewall on your computer or network is blocking incoming connections to the signaling server port (e.g., 3001).
+    *   Ensure both the Next.js app and the signaling server are accessible on your network if running on different machines.
+
+7.  **Try a Different Browser/Incognito Mode:**
+    *   Sometimes browser extensions or settings interfere. Test in an incognito window or a different browser.
+
+**Other Issues:**
+
 -   **Users don't see each other / Messages not sending:**
-    1.  **Verify Signaling Flow:** Use the signaling server logs (Step 5 above) to confirm that 'join', 'offer', 'answer', and 'ice-candidate' events are being correctly relayed between the peers. If a user joins, does the server log it and emit `online-users`? When an offer is sent, does the server log receiving it and forwarding it to the correct target?
-    2.  **Check Browser Console (Both Peers):** Look for WebRTC-specific errors in the console tab on *both* browsers involved in the chat. Errors like `Failed to set remote description`, `ICE connection failed`, or data channel errors indicate problems establishing the direct P2P link.
-    3.  **STUN/TURN Servers:** The default configuration uses Google's public STUN server. This works for many networks, but complex NATs (like symmetric NATs found in some corporate or mobile networks) may require a TURN server for relaying traffic. Setting up and configuring a TURN server (e.g., Coturn) is beyond the scope of this basic example but necessary for robust connectivity in all network conditions. If peers are on very different/restrictive networks, this might be the issue.
-    4.  **Data Channel State:** Check `window.ghostline_debug.getDataChannels()` in the browser console. Are the data channels reaching the `open` state? If they stay `connecting` or close unexpectedly, it points to a P2P connection issue.
-    5.  **Message Broadcasting Logic:** Ensure the `broadcastMessage` function in `webrtc.ts` is correctly iterating through open data channels and sending the message. Add logging within that function.
--   **Dependencies:** Ensure all dependencies are installed correctly (`npm install`). Sometimes deleting `node_modules` and `package-lock.json` (or `yarn.lock`) and running `npm install` again can fix issues.
+    1.  **Verify Signaling Flow (Server Logs):** Use your detailed signaling server logs (Step 5 above) to confirm that `join`, `offer`, `answer`, and `ice-candidate` events are being correctly relayed between the peers. If a user joins, does the server log it and emit `online-users`? When an offer is sent, does the server log receiving it and forwarding it to the correct target? If signaling isn't working, P2P connections won't establish.
+    2.  **Check Browser Console (Both Peers):** Look for WebRTC-specific errors (e.g., `Failed to set remote description`, `ICE connection failed`, Data Channel errors) in the console tab on *both* browsers involved in the chat.
+    3.  **STUN/TURN Servers:** The default configuration uses Google's public STUN server. This works for many networks, but complex NATs might require a TURN server for relaying traffic. If peers are on very different/restrictive networks, this might be the issue. Setting up TURN is beyond this basic example.
+    4.  **Data Channel State:** Check `window.ghostline_debug.getDataChannels()` in the browser console. Are the data channels reaching the `open` state?
+    5.  **Message Broadcasting Logic:** Check the `broadcastMessage` function in `webrtc.ts` and its logs.
+
+-   **Dependencies:** Ensure dependencies are installed (`npm install`). Sometimes deleting `node_modules` and `package-lock.json` (or `yarn.lock`) and running `npm install` again helps.
+```

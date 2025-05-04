@@ -37,6 +37,7 @@ export default function Home() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const { toast } = useToast();
    const isConnecting = useRef(false); // Prevent multiple connection attempts
+   const lastErrorRef = useRef<string | null>(null); // Store last error message
 
   // --- WebRTC Event Handlers ---
 
@@ -44,6 +45,7 @@ export default function Home() {
     console.log('WebRTC handleConnectionSuccess called');
     setConnectionStatus('connected');
     isConnecting.current = false;
+    lastErrorRef.current = null; // Clear last error on success
     toast({
       title: 'Connected!',
       description: `Welcome, ${username}! You are now connected via WebRTC.`,
@@ -141,19 +143,22 @@ export default function Home() {
 
   const handleError = useCallback((error: string) => {
     console.error('WebRTC Error:', error); // Log the error regardless of connection status
-     // Avoid flooding toasts for the same error
-     // Basic check, could be more sophisticated
-     if (connectionStatus !== 'error') {
+     // Avoid flooding toasts for the same error, especially common connection errors
+     if (error !== lastErrorRef.current || connectionStatus !== 'error') {
+          lastErrorRef.current = error; // Store the new error
           toast({
-            title: 'Connection Error',
-            description: error || 'An unexpected error occurred. Check console & signaling server.', // Updated description
+            title: 'Connection Issue', // More general title
+            // Add more specific troubleshooting advice based on common errors
+            description: error.includes('signaling server')
+              ? `Problem connecting to signaling server: ${error}. Please ensure the server is running, the URL in .env.local is correct, and CORS is configured properly on the server. Check browser console and server logs for more details.`
+              : error || 'An unexpected error occurred. Check console & signaling server.',
             variant: 'destructive',
+            duration: 10000, // Show connection errors a bit longer
           });
      }
      setConnectionStatus('error');
      isConnecting.current = false; // Allow retry
-    // Consider if disconnect should be called here automatically
-    // WebRTC.disconnect(); // This might be too aggressive
+    // Consider if disconnect should be called here automatically - NO, let user retry
   }, [toast, connectionStatus]);
 
 
@@ -183,9 +188,7 @@ export default function Home() {
 
     try {
         // Ensure any previous connection attempts are fully cleaned up before starting a new one.
-        // This might involve explicitly calling disconnect if there's a chance a previous attempt
-        // left things in a weird state, though the internal cleanup should handle most cases.
-        // WebRTC.disconnect(); // Uncomment cautiously if needed for robust retries
+        await WebRTC.disconnect(); // Explicitly disconnect before trying again
 
         await WebRTC.connect(newUserId, newUsername, {
             onConnected: handleConnectionSuccess,
@@ -195,19 +198,19 @@ export default function Home() {
             onError: handleError, // Centralized error handling
         });
         // Connection success is now handled by the onConnected callback
-    } catch (error) {
+    } catch (error: any) { // Catch errors from the initial connect() promise
         console.error("Failed to initiate connection:", error);
         isConnecting.current = false;
         setConnectionStatus('error'); // Set error state
         // Rollback state only if the initial connection promise itself failed
         setUsername(null);
         setUserId(null);
-        // The `handleError` callback should have already shown a toast,
-        // but we can add a specific one for the initial promise rejection if needed.
-        // Explicitly call handleDisconnection to ensure cleanup if connect promise rejected
-        // The error callback will likely have been called already by connect, triggering cleanup
-        // Calling it again here might be redundant unless the promise rejects *before* the socket events fire.
-        handleDisconnection();
+        // The `handleError` callback will likely be called by connect's internal logic
+        // if the error happens after socket setup. If the promise rejects
+        // *before* socket events, handleError might not have run yet.
+        // Call it here to ensure an error is always shown/logged.
+        handleError(error.message || "Failed to initialize connection.");
+        // No need to call handleDisconnection here, cleanup should happen within connect or handleError
     }
 
   }, [tempUsername, toast, handleConnectionSuccess, handleDisconnection, handleUserListUpdate, handleMessageReceived, handleError]);
@@ -216,11 +219,9 @@ export default function Home() {
      if (connectionStatus !== 'disconnected') {
          WebRTC.disconnect(); // Trigger the WebRTC disconnection process
      }
-     // The onDisconnected callback (called by WebRTC.disconnect's cleanup) handles the state cleanup.
-     // Explicitly call handleDisconnection here ONLY IF WebRTC.disconnect might not fire it
-     // (e.g., if already disconnected or socket is null). It's safer to call it to ensure UI updates.
-     handleDisconnection();
-   }, [connectionStatus, handleDisconnection]);
+     // The onDisconnected callback handles the state cleanup.
+     // handleDisconnection(); // Redundant call usually, handled by the callback set in connect()
+   }, [connectionStatus]); // Removed handleDisconnection dependency
 
   const handleSendMessage = useCallback((text: string) => {
      if (!userId || !username || connectionStatus !== 'connected') {
@@ -274,9 +275,9 @@ export default function Home() {
             <CardDescription className="text-center text-muted-foreground">
               Enter a username to join or reconnect.
               {connectionStatus === 'error' && (
-                <p className="text-destructive mt-2">
-                  Connection failed. Please ensure the signaling server is running and accessible,
-                  check the console for details, and try again.
+                <p className="text-destructive mt-2 text-sm"> {/* Adjusted size */}
+                  Connection failed. Please ensure the signaling server is running, accessible,
+                  and correctly configured (especially CORS). Check browser console and server logs. See README for troubleshooting.
                  </p>
               )}
             </CardDescription>
@@ -305,7 +306,7 @@ export default function Home() {
                 )}
             </Button>
              <p className="text-xs text-center text-muted-foreground">
-                Requires a running <a href="https://socket.io/docs/v4/server-initialization/#Example" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary/80">signaling server</a> and correct URL/CORS setup. See README.
+                Requires a running <a href="https://github.com/YOUR_REPO/blob/main/README.md#troubleshooting" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary/80">signaling server</a> with correct URL/CORS setup. See README.
              </p>
           </CardContent>
         </Card>
