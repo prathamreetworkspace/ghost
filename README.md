@@ -86,11 +86,10 @@ This is a Next.js application demonstrating a real-time peer-to-peer (P2P) chat 
 -   **Connection Errors (`xhr poll error`, `timeout`, etc.):**
     1.  **Is the signaling server running?** Verify its terminal output.
     2.  **Is the `NEXT_PUBLIC_SIGNALING_SERVER_URL` in `.env.local` correct?** (Protocol, host, port).
-    3.  **Did you configure CORS correctly on the signaling server** to allow `http://localhost:9002` (or your app's origin)? See step 2 above.
+    3.  **Did you configure CORS correctly on the signaling server** to allow `http://localhost:9002` (or your app's origin)? See step 2 above. This is the most common cause of `xhr poll error`.
     4.  Check browser developer console for more detailed error messages.
     5.  Check for firewall or network issues blocking the connection.
 -   **Users don't see each other / Messages not sending:**
     1.  Verify the signaling server is correctly relaying 'offer', 'answer', and 'ice-candidate' events between peers. Add logging to your signaling server.
     2.  Check the browser console on *both* peers for WebRTC errors (e.g., `Failed to set remote description`, ICE connection failures).
     3.  Ensure STUN servers are configured (default uses Google's). For more complex networks (some corporate firewalls, symmetric NATs), a TURN server might be required, which needs separate setup and configuration in `src/lib/webrtc.ts`.
-```
