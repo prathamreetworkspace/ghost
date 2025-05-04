@@ -6,7 +6,8 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster"; // Import Toaster
 
-// Instantiate fonts correctly using the named exports and assign CSS variables
+// Instantiate fonts correctly by calling the named exports as functions
+// and assign CSS variables
 const geistSans = GeistSans({
   variable: "--font-geist-sans",
   subsets: ["latin"], // Optional: Specify subsets if needed
@@ -30,9 +31,10 @@ export default function RootLayout({
   return (
     // Apply font variables directly to the <html> tag for global availability
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      {/* Apply base font style (sans-serif) to the body */}
+      {/* Apply base font style (sans-serif) to the body using Tailwind utility class */}
+      {/* Tailwind's font-sans class is configured in tailwind.config.ts to use the CSS variable */}
       <body
-        className={`font-sans antialiased`} // Use font-sans utility, Tailwind maps it to --font-geist-sans
+        className={`font-sans antialiased`}
       >
         {children}
         <Toaster /> {/* Add Toaster component */}
