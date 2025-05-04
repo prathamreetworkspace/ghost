@@ -1,4 +1,3 @@
-
 // src/app/page.tsx
 'use client';
 
@@ -12,6 +11,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { User, MessageCircle, LogOut, Wifi, WifiOff, Loader } from 'lucide-react';
 import { ChatInterface } from '@/components/chat-interface';
 import * as WebRTC from '@/lib/webrtc'; // Import WebRTC functions
+
+// Define DEFAULT_SIGNALING_URL here as well for the error message
+const DEFAULT_SIGNALING_URL = 'http://localhost:3001';
 
 export type UserType = {
   id: string;
@@ -142,34 +144,44 @@ export default function Home() {
   }, [userId]); // Depend on userId to filter self
 
   const handleError = useCallback((error: string) => {
-    console.error('WebRTC Error:', error); // Log the error regardless of connection status
+    console.error('WebRTC Error:', error); // Log the user-friendly error passed from webrtc.ts
      // Avoid flooding toasts for the same error, especially common connection errors
      if (error !== lastErrorRef.current || connectionStatus !== 'error') {
           lastErrorRef.current = error; // Store the new error
 
           // Determine the specific error type for better messaging
           let userFriendlyError = error || 'An unexpected error occurred.';
-          let troubleshootingAdvice = ' Check the browser console and **signaling server logs** for more details. See README for detailed troubleshooting steps.';
+           // Fetch the actual URL being used (consider making this available from webrtc lib if needed)
+           const signalingUrlUsed = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || DEFAULT_SIGNALING_URL;
+           let troubleshootingAdvice = ` Check the browser console (Network/Console tabs) and **crucially, the signaling server's own console logs** for specific errors (like CORS issues, port conflicts, etc.). Refer to the README for detailed troubleshooting steps.`;
 
+           // Refine error messages based on keywords passed from webrtc.ts
            if (error.includes('signaling server')) {
                  // Common connection issues
-                 if (error.includes('xhr poll error') || error.includes('timeout')) {
-                    userFriendlyError = `Connection timeout or polling error with signaling server.`;
-                    troubleshootingAdvice = ` Please ensure the server is running, accessible from your network, and its CORS configuration allows connections from your origin (${window.location.origin}). Check browser console (Network tab) and **signaling server logs**. See README troubleshooting.`;
-                 } else if (error.includes('websocket error')) {
-                    userFriendlyError = `WebSocket connection to signaling server failed.`;
-                    troubleshootingAdvice = ` This often means the server isn't running, the URL is wrong, or a firewall/network issue is blocking the connection. Check browser console and **signaling server logs**. See README troubleshooting.`;
+                 if (error.includes('timeout') || error.includes('polling error')) {
+                     userFriendlyError = `Connection timeout or polling error with signaling server (${signalingUrlUsed}).`;
+                     troubleshootingAdvice = ` Please ensure the server is running at this exact URL, is accessible from your network, and its CORS configuration allows connections from your origin (${window.location.origin}). Verify the **signaling server logs** for startup or runtime errors. See README troubleshooting.`;
+                 } else if (error.includes('WebSocket connection failed')) {
+                     userFriendlyError = `WebSocket connection to signaling server failed (${signalingUrlUsed}).`;
+                     troubleshootingAdvice = ` This often means the server isn't running, the URL in your \`.env.local\` (NEXT_PUBLIC_SIGNALING_SERVER_URL) is wrong (or defaulting to ${DEFAULT_SIGNALING_URL}), or a firewall/network issue is blocking the connection. **Check the signaling server logs** first. See README troubleshooting.`;
                  } else if (error.includes('Connection refused')) {
-                    userFriendlyError = `Connection to signaling server refused.`;
-                    troubleshootingAdvice = ` Ensure the signaling server is running on the expected address and port (${process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || DEFAULT_SIGNALING_URL}) and isn't blocked by a firewall. Check **signaling server logs**. See README troubleshooting.`;
+                     userFriendlyError = `Connection to signaling server refused (${signalingUrlUsed}).`;
+                     troubleshootingAdvice = ` Ensure the signaling server is running on the expected address and port and isn't blocked by a firewall. Check the **signaling server logs** to confirm it started correctly. See README troubleshooting.`;
+                 } else if (error.includes('Server disconnected')) {
+                     userFriendlyError = `The signaling server (${signalingUrlUsed}) disconnected you.`;
+                     troubleshootingAdvice = ` Check the **signaling server logs** for the reason. It might have restarted or encountered an internal error. See README troubleshooting.`;
                  } else {
-                    userFriendlyError = `Problem connecting to signaling server: ${error}.`;
-                     troubleshootingAdvice = ` Please ensure the server is running, the URL in .env.local is correct, and CORS is configured properly on the server. Check browser console and **signaling server logs** for more details. See README troubleshooting.`;
+                     // Generic signaling server error
+                     userFriendlyError = `Problem connecting to signaling server (${signalingUrlUsed}): ${error}.`;
+                     troubleshootingAdvice = ` Verify the server is running, the URL (\`.env.local\` or default) is correct, and CORS is configured properly on the server. **Check the signaling server logs** for details. See README troubleshooting.`;
                  }
            } else if (error.includes('peer')) {
                  userFriendlyError = `Problem connecting to a peer: ${error}.`;
-                 troubleshootingAdvice = ` This might be due to network issues (NAT/Firewall) between peers or problems with STUN/TURN servers. Check browser console for WebRTC errors. See README troubleshooting.`;
-           }
+                 troubleshootingAdvice = ` This might be due to network issues (NAT/Firewall) between peers or problems with STUN/TURN servers. Check browser console for specific WebRTC errors. See README troubleshooting.`;
+            } else if (error.includes('initialization failed') || error.includes('initialize connection')) {
+                 userFriendlyError = `Failed to initialize connection: ${error}`;
+                 troubleshootingAdvice = ` This could be an issue setting up the socket or initial configuration. Check the browser console and **signaling server logs** for more clues. See README troubleshooting.`;
+            }
 
 
           toast({
@@ -182,7 +194,7 @@ export default function Home() {
      setConnectionStatus('error');
      isConnecting.current = false; // Allow retry
     // Consider if disconnect should be called here automatically - NO, let user retry
-  }, [toast, connectionStatus]);
+  }, [toast, connectionStatus]); // Added connectionStatus dependency
 
 
   // --- Component Logic ---
@@ -200,6 +212,7 @@ export default function Home() {
 
     isConnecting.current = true;
     setConnectionStatus('connecting');
+    lastErrorRef.current = null; // Clear previous errors on new attempt
     const newUsername = tempUsername.trim();
     // Simple ID generation for prototype - consider more robust UUIDs for production
     const newUserId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -211,7 +224,13 @@ export default function Home() {
 
     try {
         // Ensure any previous connection attempts are fully cleaned up before starting a new one.
-        await WebRTC.disconnect(); // Explicitly disconnect before trying again
+        // Do not disconnect if already disconnected or in error state from previous attempt
+        if (connectionStatus !== 'disconnected' && connectionStatus !== 'error') {
+             await WebRTC.disconnect(); // Explicitly disconnect only if potentially connected/connecting
+        } else {
+             WebRTC.cleanup(); // Ensure clean state even if not connected (safer)
+        }
+
 
         await WebRTC.connect(newUserId, newUsername, {
             onConnected: handleConnectionSuccess,
@@ -221,30 +240,29 @@ export default function Home() {
             onError: handleError, // Centralized error handling
         });
         // Connection success is now handled by the onConnected callback
-    } catch (error: any) { // Catch errors from the initial connect() promise
-        console.error("Failed to initiate connection:", error);
+    } catch (error: any) { // Catch errors from the initial connect() promise (e.g., socket init failure)
+        console.error("Failed to initiate connection promise:", error);
+        // The `handleError` callback might have already been called by connect's internal logic
+        // if the error happens after socket setup. Call it here ONLY if it hasn't been called yet.
+        if (lastErrorRef.current === null) {
+            handleError(error.message || "Failed to initialize connection.");
+        }
+        // Ensure state is consistent with failure
+        setConnectionStatus('error');
         isConnecting.current = false;
-        setConnectionStatus('error'); // Set error state
-        // Rollback state only if the initial connection promise itself failed
         setUsername(null);
         setUserId(null);
-        // The `handleError` callback will likely be called by connect's internal logic
-        // if the error happens after socket setup. If the promise rejects
-        // *before* socket events, handleError might not have run yet.
-        // Call it here to ensure an error is always shown/logged.
-        handleError(error.message || "Failed to initialize connection.");
         // No need to call handleDisconnection here, cleanup should happen within connect or handleError
     }
 
-  }, [tempUsername, toast, handleConnectionSuccess, handleDisconnection, handleUserListUpdate, handleMessageReceived, handleError]);
+  }, [tempUsername, toast, connectionStatus, handleConnectionSuccess, handleDisconnection, handleUserListUpdate, handleMessageReceived, handleError]);
 
    const handleLeave = useCallback(() => {
      if (connectionStatus !== 'disconnected') {
          WebRTC.disconnect(); // Trigger the WebRTC disconnection process
      }
      // The onDisconnected callback handles the state cleanup.
-     // handleDisconnection(); // Redundant call usually, handled by the callback set in connect()
-   }, [connectionStatus]); // Removed handleDisconnection dependency
+   }, [connectionStatus]);
 
   const handleSendMessage = useCallback((text: string) => {
      if (!userId || !username || connectionStatus !== 'connected') {
@@ -275,7 +293,7 @@ export default function Home() {
     return () => {
       // Ensure disconnection happens when the component unmounts
       // e.g., navigating away or closing the tab.
-      if (WebRTC.isConnected()) { // Add a helper in webrtc.ts if needed
+      if (WebRTC.isConnected()) {
           console.log('Component unmounting, disconnecting WebRTC...');
           WebRTC.disconnect();
       }
@@ -298,9 +316,13 @@ export default function Home() {
             <CardDescription className="text-center text-muted-foreground">
               Enter a username to join or reconnect.
               {connectionStatus === 'error' && (
-                <p className="text-destructive mt-2 text-sm"> {/* Adjusted size */}
-                   Connection failed. Please ensure the signaling server is running, accessible,
-                   and correctly configured (especially CORS). **Check the signaling server's console logs** and the browser's developer console (Network and Console tabs) for errors. Refer to the README for detailed troubleshooting steps.
+                <p className="text-destructive mt-2 text-sm font-medium"> {/* Added font-medium */}
+                   Connection failed. Error: "{lastErrorRef.current || 'Unknown error'}".
+                   <br /> {/* Line break for better readability */}
+                    Please ensure the <strong className="font-semibold">signaling server</strong> is running, accessible,
+                   and correctly configured (especially CORS).
+                    <br/>
+                   **Check the signaling server's console logs** and your browser's developer console (Network/Console tabs) for specific errors. Refer to the <a href="https://github.com/YOUR_REPO/blob/main/README.md#troubleshooting" target="_blank" rel="noopener noreferrer" className="underline hover:text-destructive/80">README</a> for detailed troubleshooting.
                  </p>
               )}
             </CardDescription>
@@ -329,7 +351,7 @@ export default function Home() {
                 )}
             </Button>
              <p className="text-xs text-center text-muted-foreground">
-                Requires a running <a href="https://github.com/YOUR_REPO/blob/main/README.md#troubleshooting" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary/80">signaling server</a> with correct URL/CORS setup. See README.
+                Requires a running <a href="https://github.com/YOUR_REPO/blob/main/README.md#troubleshooting" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary/80">signaling server</a> with correct URL (check `.env.local`) & CORS setup. See README.
              </p>
           </CardContent>
         </Card>
@@ -343,7 +365,7 @@ export default function Home() {
        <div className="flex items-center justify-center min-h-screen bg-background flex-col space-y-4">
          <Loader className="h-16 w-16 animate-spin text-primary" />
          <p className="text-xl text-muted-foreground">Connecting to the P2P network...</p>
-         <p className="text-sm text-muted-foreground">(Connecting to signaling server at {process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || 'http://localhost:3001'})</p>
+         <p className="text-sm text-muted-foreground">(Connecting to signaling server at {process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || DEFAULT_SIGNALING_URL})</p>
        </div>
      );
    }
