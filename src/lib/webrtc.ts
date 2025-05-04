@@ -138,13 +138,13 @@ export function connect(
             // Provide a more user-friendly error message
             let errorMessage = `Failed to connect to signaling server (${SIGNALING_SERVER_URL}). `;
             // Check for common causes
-            if (error.message.includes('xhr poll error') || error.message.includes('timeout') || error.message.includes('transport close')) {
-                 errorMessage += 'Please ensure the server is running, accessible, and check its CORS configuration allows your origin.';
-            } else if (error.message.includes('websocket error') || error.message.includes('Connection refused')) { // Added check for ERR_CONNECTION_REFUSED
+             if (error.message.includes('xhr poll error') || error.message.includes('timeout') || error.message.includes('transport close')) {
+                 errorMessage += 'Possible causes: Server not running, network issue, or server CORS configuration problem.';
+             } else if (error.message.includes('websocket error') || error.message.includes('Connection refused')) { // Added check for ERR_CONNECTION_REFUSED
                  errorMessage += 'WebSocket connection failed. Check **signaling server logs** and network/firewall settings.'; // Enhanced message
-            }
+             }
              else {
-                errorMessage += `Details: ${error.message}`;
+                errorMessage += `Details: ${error.message}.`;
             }
             onErrorCallback(errorMessage); // Inform the UI/user
             cleanup(); // Clean up resources on failure
@@ -165,6 +165,7 @@ export function connect(
                 let errorReason = reason;
                 if (reason === 'transport close') errorReason = 'Connection lost (transport closed)';
                 if (reason === 'ping timeout') errorReason = 'Connection timed out';
+                 if (reason === 'io server disconnect') errorReason = 'Server disconnected you'; // Added case
                 onErrorCallback(`Lost connection to signaling server: ${errorReason}. Check server status and logs.`); // Added hint
              }
              // Ensure cleanup happens regardless of the reason

@@ -146,14 +146,37 @@ export default function Home() {
      // Avoid flooding toasts for the same error, especially common connection errors
      if (error !== lastErrorRef.current || connectionStatus !== 'error') {
           lastErrorRef.current = error; // Store the new error
+
+          // Determine the specific error type for better messaging
+          let userFriendlyError = error || 'An unexpected error occurred.';
+          let troubleshootingAdvice = ' Check the browser console and **signaling server logs** for more details. See README for detailed troubleshooting steps.';
+
+           if (error.includes('signaling server')) {
+                 // Common connection issues
+                 if (error.includes('xhr poll error') || error.includes('timeout')) {
+                    userFriendlyError = `Connection timeout or polling error with signaling server.`;
+                    troubleshootingAdvice = ` Please ensure the server is running, accessible from your network, and its CORS configuration allows connections from your origin (${window.location.origin}). Check browser console (Network tab) and **signaling server logs**. See README troubleshooting.`;
+                 } else if (error.includes('websocket error')) {
+                    userFriendlyError = `WebSocket connection to signaling server failed.`;
+                    troubleshootingAdvice = ` This often means the server isn't running, the URL is wrong, or a firewall/network issue is blocking the connection. Check browser console and **signaling server logs**. See README troubleshooting.`;
+                 } else if (error.includes('Connection refused')) {
+                    userFriendlyError = `Connection to signaling server refused.`;
+                    troubleshootingAdvice = ` Ensure the signaling server is running on the expected address and port (${process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || DEFAULT_SIGNALING_URL}) and isn't blocked by a firewall. Check **signaling server logs**. See README troubleshooting.`;
+                 } else {
+                    userFriendlyError = `Problem connecting to signaling server: ${error}.`;
+                     troubleshootingAdvice = ` Please ensure the server is running, the URL in .env.local is correct, and CORS is configured properly on the server. Check browser console and **signaling server logs** for more details. See README troubleshooting.`;
+                 }
+           } else if (error.includes('peer')) {
+                 userFriendlyError = `Problem connecting to a peer: ${error}.`;
+                 troubleshootingAdvice = ` This might be due to network issues (NAT/Firewall) between peers or problems with STUN/TURN servers. Check browser console for WebRTC errors. See README troubleshooting.`;
+           }
+
+
           toast({
-            title: 'Connection Issue', // More general title
-            // Add more specific troubleshooting advice based on common errors
-            description: error.includes('signaling server')
-              ? `Problem connecting to signaling server: ${error}. Please ensure the server is running, the URL in .env.local is correct, and CORS is configured properly on the server. Check browser console and server logs for more details.`
-              : error || 'An unexpected error occurred. Check console & signaling server.',
+            title: 'Connection Issue',
+            description: `${userFriendlyError}${troubleshootingAdvice}`,
             variant: 'destructive',
-            duration: 10000, // Show connection errors a bit longer
+            duration: 15000, // Show connection errors longer
           });
      }
      setConnectionStatus('error');
@@ -276,8 +299,8 @@ export default function Home() {
               Enter a username to join or reconnect.
               {connectionStatus === 'error' && (
                 <p className="text-destructive mt-2 text-sm"> {/* Adjusted size */}
-                  Connection failed. Please ensure the signaling server is running, accessible,
-                  and correctly configured (especially CORS). Check browser console and server logs. See README for troubleshooting.
+                   Connection failed. Please ensure the signaling server is running, accessible,
+                   and correctly configured (especially CORS). **Check the signaling server's console logs** and the browser's developer console (Network and Console tabs) for errors. Refer to the README for detailed troubleshooting steps.
                  </p>
               )}
             </CardDescription>
