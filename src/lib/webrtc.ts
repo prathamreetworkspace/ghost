@@ -141,7 +141,7 @@ export function connect(
             if (error.message.includes('xhr poll error') || error.message.includes('timeout') || error.message.includes('transport close')) {
                  errorMessage += 'Please ensure the server is running, accessible, and check its CORS configuration allows your origin.';
             } else if (error.message.includes('websocket error') || error.message.includes('Connection refused')) { // Added check for ERR_CONNECTION_REFUSED
-                 errorMessage += 'WebSocket connection failed. Check server logs and network/firewall settings.';
+                 errorMessage += 'WebSocket connection failed. Check **signaling server logs** and network/firewall settings.'; // Enhanced message
             }
              else {
                 errorMessage += `Details: ${error.message}`;
