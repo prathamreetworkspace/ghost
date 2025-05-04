@@ -1,21 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+// Corrected import for Geist Sans font
+import { Geist_Sans as GeistSans } from "geist/font/sans";
+import { Geist_Mono as GeistMono } from "geist/font/mono"; // Corrected import for Geist Mono
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster"; // Import Toaster
 
-const geistSans = Geist({
+// Instantiate fonts with variables
+const geistSans = GeistSans({
   variable: "--font-geist-sans",
-  subsets: ["latin"],
+  subsets: ["latin"], // Optional: Specify subsets if needed
 });
 
-const geistMono = Geist_Mono({
+const geistMono = GeistMono({
   variable: "--font-geist-mono",
-  subsets: ["latin"],
+  subsets: ["latin"], // Optional: Specify subsets if needed
 });
 
 export const metadata: Metadata = {
-  title: "GhostLine",
-  description: "Real-time P2P chat application",
+  title: "GhostLine P2P Chat", // Updated title
+  description: "Real-time P2P chat application using WebRTC", // Updated description
 };
 
 export default function RootLayout({
@@ -25,8 +28,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      {/* Apply font variables to the body */}
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`} // Use font-sans utility
       >
         {children}
         <Toaster /> {/* Add Toaster component */}

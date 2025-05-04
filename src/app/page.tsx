@@ -1,15 +1,16 @@
+// src/app/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
-import { LandingPage } from '@/components/landing-page';
-import { ChatInterface } from '@/components/chat-interface';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { User, MessageCircle, LogOut } from 'lucide-react';
+import { User, MessageCircle, LogOut, Wifi, WifiOff, Loader } from 'lucide-react';
+import { ChatInterface } from '@/components/chat-interface';
+import * as WebRTC from '@/lib/webrtc'; // Import WebRTC functions
 
 export type UserType = {
   id: string;
@@ -24,160 +25,238 @@ export type MessageType = {
   timestamp: number;
 };
 
+type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
 export default function Home() {
   const [username, setUsername] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [tempUsername, setTempUsername] = useState<string>('');
   const [onlineUsers, setOnlineUsers] = useState<UserType[]>([]);
   const [messages, setMessages] = useState<MessageType[]>([]);
-  const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const { toast } = useToast();
+   const isConnecting = useRef(false); // Prevent multiple connection attempts
 
-  // Placeholder: Simulate user joining/leaving and messages for UI testing
-  useEffect(() => {
-    if (isConnected && username && userId) {
-      // Simulate initial online users list
-      setOnlineUsers([
-        { id: userId, name: username },
-        { id: 'user2', name: 'Alice' },
-        { id: 'user3', name: 'Bob' },
-      ]);
+  // --- WebRTC Event Handlers ---
 
-      // Simulate receiving a message
-      const timer = setTimeout(() => {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `msg-${Date.now()}`,
-            senderId: 'user2',
-            senderName: 'Alice',
-            text: 'Hey there!',
-            timestamp: Date.now(),
-          },
-        ]);
-      }, 3000);
+  const handleConnectionSuccess = useCallback(() => {
+    console.log('WebRTC handleConnectionSuccess called');
+    setConnectionStatus('connected');
+    isConnecting.current = false;
+    toast({
+      title: 'Connected!',
+      description: `Welcome, ${username}! You are now connected via WebRTC.`,
+    });
+     // Add initial system message
+     setMessages((prev) => [{
+        id: `system-join-${Date.now()}`,
+        senderId: 'system',
+        senderName: 'System',
+        text: `You joined as ${username}. Waiting for peers...`,
+        timestamp: Date.now(),
+      }, ...prev]); // Add to the beginning
+  }, [toast, username]);
 
-      // Simulate another user joining
-      const joinTimer = setTimeout(() => {
-        const newUser = { id: 'user4', name: 'Charlie' };
-        setOnlineUsers((prev) => [...prev, newUser]);
+   const handleDisconnection = useCallback(() => {
+     console.log('WebRTC handleDisconnection called');
+     if (connectionStatus === 'disconnected') return; // Avoid multiple calls if already disconnected
+
+     setConnectionStatus('disconnected');
+     isConnecting.current = false;
+     setUsername(null);
+     setUserId(null);
+     setOnlineUsers([]);
+     setMessages([]);
+     setTempUsername(''); // Clear input field on voluntary disconnect
+     // Only show toast if it wasn't an error state before
+     if (connectionStatus !== 'error') {
         toast({
-          title: 'User Joined',
-          description: `${newUser.name} has joined the chat.`,
+          title: 'Disconnected',
+          description: 'You have left the chat.',
         });
-        setMessages((prev) => [
-           ...prev,
-           {
-             id: `system-${Date.now()}`,
-             senderId: 'system',
-             senderName: 'System',
-             text: `${newUser.name} joined.`,
-             timestamp: Date.now(),
-           },
-         ]);
-      }, 5000);
+     }
+   }, [toast, connectionStatus]);
 
-       // Simulate a user leaving
-       const leaveTimer = setTimeout(() => {
-        const leavingUser = onlineUsers.find(u => u.id === 'user3');
-        if (leavingUser) {
-          setOnlineUsers((prev) => prev.filter(u => u.id !== 'user3'));
+
+  const handleUserListUpdate = useCallback((users: UserType[]) => {
+    console.log('WebRTC handleUserListUpdate called', users);
+    const currentUser = users.find(u => u.id === userId);
+    const otherUsers = users.filter(u => u.id !== userId);
+
+    setOnlineUsers(currentUser ? [currentUser, ...otherUsers] : otherUsers); // Keep current user first if present
+
+    // Add system messages for users joining/leaving based on difference
+    setOnlineUsers(prevOnlineUsers => {
+       const currentIds = new Set(users.map(u => u.id));
+       const prevIds = new Set(prevOnlineUsers.map(u => u.id));
+
+       const joinedUsers = users.filter(u => !prevIds.has(u.id) && u.id !== userId);
+       const leftUsers = prevOnlineUsers.filter(u => !currentIds.has(u.id) && u.id !== userId);
+
+       const systemMessages: MessageType[] = [];
+       joinedUsers.forEach(u => {
+         systemMessages.push({
+           id: `system-join-${u.id}-${Date.now()}`,
+           senderId: 'system',
+           senderName: 'System',
+           text: `${u.name} joined.`,
+           timestamp: Date.now() + Math.random(), // Avoid key collision
+         });
+       });
+       leftUsers.forEach(u => {
+         systemMessages.push({
+            id: `system-left-${u.id}-${Date.now()}`,
+           senderId: 'system',
+           senderName: 'System',
+           text: `${u.name} left.`,
+           timestamp: Date.now() + Math.random(),
+         });
+       });
+
+       if (systemMessages.length > 0) {
+         setMessages(prevMessages => [...prevMessages, ...systemMessages]);
+       }
+
+       return users; // Update the state
+    });
+
+
+  }, [userId]); // Depend on userId to filter self
+
+  const handleMessageReceived = useCallback((message: MessageType) => {
+    console.log('WebRTC handleMessageReceived called', message);
+    if (message.senderId === userId) return; // Ignore messages from self
+     setMessages((prevMessages) => {
+         // Prevent duplicates
+         if (prevMessages.some(m => m.id === message.id)) {
+             return prevMessages;
+         }
+         return [...prevMessages, message];
+     });
+  }, [userId]); // Depend on userId to filter self
+
+  const handleError = useCallback((error: string) => {
+    console.error('WebRTC Error:', error);
+     // Avoid flooding toasts for the same error
+     // Basic check, could be more sophisticated
+     if (connectionStatus !== 'error') {
           toast({
-            title: 'User Left',
-            description: `${leavingUser.name} has left the chat.`,
+            title: 'Connection Error',
+            description: error || 'An unexpected error occurred.',
+            variant: 'destructive',
           });
-          setMessages((prev) => [
-             ...prev,
-             {
-               id: `system-${Date.now() + 1}`,
-               senderId: 'system',
-               senderName: 'System',
-               text: `${leavingUser.name} left.`,
-               timestamp: Date.now() + 1,
-             },
-           ]);
-        }
-      }, 8000);
-
-      return () => {
-        clearTimeout(timer);
-        clearTimeout(joinTimer);
-        clearTimeout(leaveTimer);
-      }
-    }
-  }, [isConnected, username, userId, toast]);
+     }
+     setConnectionStatus('error');
+     isConnecting.current = false; // Allow retry
+    // Consider if disconnect should be called here automatically
+    // WebRTC.disconnect(); // This might be too aggressive
+  }, [toast, connectionStatus]);
 
 
-  const handleJoin = () => {
-    if (tempUsername.trim()) {
-      const newUserId = `user-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      setUsername(tempUsername.trim());
-      setUserId(newUserId);
-      setIsConnected(true); // Simulate successful connection
-      toast({
-        title: 'Connected!',
-        description: `Welcome, ${tempUsername.trim()}!`,
-      });
-       setMessages([{
-         id: `system-join-${Date.now()}`,
-         senderId: 'system',
-         senderName: 'System',
-         text: `You joined as ${tempUsername.trim()}.`,
-         timestamp: Date.now(),
-       }]);
-    } else {
+  // --- Component Logic ---
+
+  const handleJoin = useCallback(async () => {
+    if (isConnecting.current) return; // Prevent multiple clicks
+    if (!tempUsername.trim()) {
       toast({
         title: 'Error',
         description: 'Please enter a username.',
         variant: 'destructive',
       });
+      return;
     }
-  };
 
-   const handleLeave = () => {
-    setIsConnected(false);
-    setUsername(null);
-    setUserId(null);
-    setOnlineUsers([]);
-    setMessages([]);
-    setTempUsername('');
-    toast({
-      title: 'Disconnected',
-      description: 'You have left the chat.',
-    });
-  };
+    isConnecting.current = true;
+    setConnectionStatus('connecting');
+    const newUsername = tempUsername.trim();
+    const newUserId = `user-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`; // More robust ID
 
-  const handleSendMessage = (text: string) => {
-     if (!userId || !username) return; // Should not happen if connected
+    // Set state immediately for UI feedback, but WebRTC connect confirms it
+    setUsername(newUsername);
+    setUserId(newUserId);
 
-    const newMessage: MessageType = {
-      id: `msg-${Date.now()}-${userId}`,
-      senderId: userId,
-      senderName: username, // Use the logged-in username
-      text: text,
-      timestamp: Date.now(),
+    try {
+        await WebRTC.connect(newUserId, newUsername, {
+            onConnected: handleConnectionSuccess,
+            onDisconnected: handleDisconnection, // We handle UI updates here or in handleLeave
+            onUserListUpdate: handleUserListUpdate,
+            onMessageReceived: handleMessageReceived,
+            onError: handleError,
+        });
+        // Connection success is handled by the onConnected callback
+    } catch (error) {
+        console.error("Failed to initiate connection:", error);
+        isConnecting.current = false;
+        setConnectionStatus('error');
+        setUsername(null); // Rollback state on failure
+        setUserId(null);
+         toast({
+           title: 'Connection Failed',
+           description: error.message || 'Could not connect to the signaling server.',
+           variant: 'destructive',
+         });
+    }
+
+  }, [tempUsername, toast, handleConnectionSuccess, handleDisconnection, handleUserListUpdate, handleMessageReceived, handleError]);
+
+   const handleLeave = useCallback(() => {
+     if (connectionStatus !== 'disconnected') {
+         WebRTC.disconnect(); // Trigger the WebRTC disconnection process
+     }
+     // The onDisconnected callback handles the state cleanup
+     handleDisconnection(); // Explicitly call to ensure UI updates if already disconnected
+   }, [connectionStatus, handleDisconnection]);
+
+  const handleSendMessage = useCallback((text: string) => {
+     if (!userId || !username || connectionStatus !== 'connected') {
+          toast({ title: 'Error', description: 'Not connected.', variant: 'destructive' });
+          return;
+     };
+
+     // Add message locally immediately for responsiveness
+      const newMessage: MessageType = {
+        id: `msg-${Date.now()}-${userId}`, // Use local user ID for locally sent messages
+        senderId: userId,
+        senderName: username, // Use the logged-in username
+        text: text,
+        timestamp: Date.now(),
+      };
+      setMessages((prevMessages) => [...prevMessages, newMessage]);
+
+
+    // Broadcast the message to all peers
+    WebRTC.broadcastMessage(text);
+
+  }, [userId, username, connectionStatus, toast]);
+
+
+   // Cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      if (connectionStatus !== 'disconnected') {
+        WebRTC.disconnect();
+      }
+       isConnecting.current = false;
     };
-    setMessages((prevMessages) => [...prevMessages, newMessage]);
-    // In a real app, send this message via WebRTC DataChannel here
-    console.log('Sending message:', newMessage);
-
-    // Simulate receiving the message back for demo purposes
-    // In a real P2P scenario, the message would only appear once (sent)
-    // unless explicitly echoed back by peers or the signaling server (not recommended).
-    // For this UI demo, we'll just add it directly.
-  };
+  }, [connectionStatus]); // Rerun cleanup logic if connection status changes
 
 
-  if (!isConnected || !username) {
+  // --- Rendering Logic ---
+
+  // Login Screen
+  if (connectionStatus === 'disconnected' || connectionStatus === 'error') {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <Card className="w-full max-w-md shadow-lg">
           <CardHeader>
             <CardTitle className="text-2xl font-bold text-center text-foreground">
-              Welcome to GhostLine
+              Welcome to GhostLine P2P Chat
             </CardTitle>
             <CardDescription className="text-center text-muted-foreground">
-              Enter a username to join the P2P chat.
+              Enter a username to join or reconnect.
+              {connectionStatus === 'error' && (
+                <p className="text-destructive mt-2">Connection failed. Please try again.</p>
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -188,9 +267,19 @@ export default function Home() {
               onChange={(e) => setTempUsername(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
               className="text-base"
+              disabled={connectionStatus === 'connecting'}
             />
-            <Button onClick={handleJoin} className="w-full bg-accent text-accent-foreground hover:bg-accent/90">
-              Join Chat
+            <Button
+                onClick={handleJoin}
+                className="w-full bg-accent text-accent-foreground hover:bg-accent/90"
+                disabled={connectionStatus === 'connecting' || !tempUsername.trim()}
+            >
+                {connectionStatus === 'connecting' ? (
+                    <> <Loader className="mr-2 h-4 w-4 animate-spin" /> Connecting... </>
+                ) : (
+                    'Join Chat'
+                )}
+
             </Button>
           </CardContent>
         </Card>
@@ -198,27 +287,49 @@ export default function Home() {
     );
   }
 
+  // Connecting Screen (optional, but good UX)
+  if (connectionStatus === 'connecting') {
+     return (
+       <div className="flex items-center justify-center min-h-screen bg-background flex-col space-y-4">
+         <Loader className="h-16 w-16 animate-spin text-primary" />
+         <p className="text-xl text-muted-foreground">Connecting to the P2P network...</p>
+       </div>
+     );
+   }
 
+
+  // Main Chat UI (Connected)
   return (
     <div className="flex h-screen bg-background text-foreground">
       {/* Sidebar for Online Users */}
-      <aside className="w-64 border-r border-border p-4 flex flex-col">
-        <h2 className="text-xl font-semibold mb-4 flex items-center">
-          <User className="mr-2 h-5 w-5 text-primary" /> Online Users
-        </h2>
+      <aside className="w-64 border-r border-border p-4 flex flex-col bg-card">
+         <div className="flex justify-between items-center mb-4">
+             <h2 className="text-xl font-semibold flex items-center">
+              <User className="mr-2 h-5 w-5 text-primary" /> Online ({onlineUsers.length})
+            </h2>
+             <span title={connectionStatus === 'connected' ? 'Connected' : 'Connection Issue'} className="ml-auto">
+               {connectionStatus === 'connected' ? (
+                 <Wifi className="h-5 w-5 text-green-500" />
+               ) : (
+                 <WifiOff className="h-5 w-5 text-destructive" />
+               )}
+             </span>
+          </div>
         <ScrollArea className="flex-grow">
           <ul className="space-y-2">
             {onlineUsers.map((user) => (
               <li key={user.id} className="flex items-center text-sm p-1 rounded hover:bg-muted">
-                 <span className={`h-2 w-2 rounded-full mr-2 ${user.id === userId ? 'bg-green-500' : 'bg-primary'}`}></span>
-                {user.name} {user.id === userId && '(You)'}
+                 {/* Green dot for self, primary for others */}
+                 <span className={`h-2 w-2 rounded-full mr-2 flex-shrink-0 ${user.id === userId ? 'bg-green-500' : 'bg-primary'}`}></span>
+                <span className="truncate" title={user.name}>{user.name}</span>
+                {user.id === userId && <span className="ml-1 text-xs text-muted-foreground">(You)</span>}
               </li>
             ))}
           </ul>
         </ScrollArea>
          <Separator className="my-4" />
-         <div className="text-center">
-            <p className="text-sm text-muted-foreground mb-2">Logged in as: <strong>{username}</strong></p>
+         <div className="text-center mt-auto"> {/* Pushes to bottom */}
+            <p className="text-sm text-muted-foreground mb-2 truncate">Logged in as: <strong>{username}</strong></p>
              <Button variant="outline" size="sm" onClick={handleLeave} className="w-full">
                 <LogOut className="mr-2 h-4 w-4" /> Leave Chat
              </Button>
@@ -229,21 +340,15 @@ export default function Home() {
       <main className="flex-1 flex flex-col">
         <header className="border-b border-border p-4">
           <h1 className="text-2xl font-bold text-foreground flex items-center">
-            <MessageCircle className="mr-2 h-6 w-6 text-primary" /> GhostLine Chat
+            <MessageCircle className="mr-2 h-6 w-6 text-primary" /> GhostLine P2P Chat
           </h1>
         </header>
-        <ChatInterface messages={messages} onSendMessage={handleSendMessage} currentUser={{ id: userId!, name: username! }} />
+        <ChatInterface
+          messages={messages}
+          onSendMessage={handleSendMessage}
+          currentUser={{ id: userId!, name: username! }} // Non-null assertion safe here due to connection status check
+        />
       </main>
-
-      {/* Placeholder for Active Channels - can be added later */}
-      {/*
-      <aside className="w-48 border-l border-border p-4">
-        <h2 className="text-lg font-semibold mb-4">Channels</h2>
-        <ul>
-          <li className="text-sm text-muted-foreground">#general (Default)</li>
-        </ul>
-      </aside>
-      */}
     </div>
   );
 }

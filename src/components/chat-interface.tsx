@@ -1,3 +1,4 @@
+// src/components/chat-interface.tsx
 'use client';
 
 import type { MessageType, UserType } from '@/app/page';
@@ -5,7 +6,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Send, MessageSquareText, UserCircle } from 'lucide-react';
+import { Send, UserCircle, Info } from 'lucide-react'; // Added Info icon for system messages
 import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -17,7 +18,6 @@ interface ChatInterfaceProps {
 
 export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInterfaceProps) {
   const [inputText, setInputText] = useState('');
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
   const handleSend = () => {
@@ -37,29 +37,37 @@ export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInte
   // Auto-scroll to bottom
   useEffect(() => {
     if (viewportRef.current) {
-        // Use setTimeout to ensure scroll happens after render update
-        setTimeout(() => {
+        // Use requestAnimationFrame for smoother scrolling after render
+        requestAnimationFrame(() => {
              if (viewportRef.current) {
                  viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
              }
-        }, 0);
+        });
     }
 }, [messages]); // Dependency array includes messages
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Message Display Area */}
-      <ScrollArea className="flex-1 p-4" ref={scrollAreaRef} viewportRef={viewportRef}>
-        <div className="space-y-4">
+      <ScrollArea className="flex-1 p-4 bg-muted/20" viewportRef={viewportRef}>
+        {/* Added a key here which changes when messages length changes.
+            This can sometimes help React reset/correct scroll behavior,
+            though it might cause a brief flicker in some cases.
+            Test if this improves the auto-scroll reliability. */}
+        <div className="space-y-4" key={messages.length}>
           {messages.map((msg) => {
              const isCurrentUser = msg.senderId === currentUser.id;
              const isSystemMessage = msg.senderId === 'system';
 
              if (isSystemMessage) {
                 return (
-                    <div key={msg.id} className="text-center my-2">
-                        <span className="text-xs text-muted-foreground italic px-2 py-1 bg-muted rounded-full">
-                            {msg.text} - {formatDistanceToNow(new Date(msg.timestamp), { addSuffix: true })}
+                    <div key={msg.id} className="text-center my-2 flex items-center justify-center space-x-2">
+                         <Info className="h-3 w-3 text-muted-foreground" />
+                         <span className="text-xs text-muted-foreground italic px-2 py-0.5">
+                            {msg.text}
+                            <span className="ml-1 opacity-70">
+                                ({formatDistanceToNow(new Date(msg.timestamp), { addSuffix: true })})
+                            </span>
                         </span>
                     </div>
                 );
@@ -75,21 +83,23 @@ export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInte
                >
                  <div
                    className={cn(
-                     'max-w-[70%] p-3 rounded-lg shadow-sm flex flex-col',
+                     'max-w-[75%] md:max-w-[65%] p-3 rounded-lg shadow flex flex-col', // Reduced max width slightly
                       isCurrentUser
-                       ? 'bg-primary text-primary-foreground'
-                       : 'bg-card border'
+                       ? 'bg-primary text-primary-foreground rounded-br-none' // Style user's messages
+                       : 'bg-card border rounded-bl-none' // Style others' messages
                    )}
                  >
+                    {/* Show sender name only for other users' messages */}
                    {!isCurrentUser && (
-                      <span className="text-xs font-semibold mb-1 flex items-center opacity-80">
+                      <span className="text-xs font-semibold mb-1 flex items-center opacity-80 text-primary">
                         <UserCircle className="h-4 w-4 mr-1 inline-block" />
                         {msg.senderName}
                       </span>
                    )}
-                    <p className="text-sm break-words">{msg.text}</p>
+                    <p className="text-sm break-words whitespace-pre-wrap">{msg.text}</p>
+                    {/* Timestamp */}
                    <span className={cn(
-                        "text-xs mt-1 opacity-70",
+                        "text-xs mt-1 opacity-60", // Made timestamp slightly more subtle
                         isCurrentUser ? 'text-right' : 'text-left'
                     )}>
                      {formatDistanceToNow(new Date(msg.timestamp), { addSuffix: true })}
@@ -102,7 +112,7 @@ export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInte
       </ScrollArea>
 
       {/* Input Area */}
-      <div className="border-t border-border p-4 bg-muted/50">
+      <div className="border-t border-border p-4 bg-card">
         <div className="flex items-center space-x-2">
           <Input
             type="text"
@@ -110,10 +120,14 @@ export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInte
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="flex-1 bg-background focus:ring-primary"
+            className="flex-1 bg-background focus:ring-primary focus:ring-offset-0" // Adjusted focus style
             aria-label="Chat message input"
+            autoComplete="off"
           />
-          <Button onClick={handleSend} className="bg-accent text-accent-foreground hover:bg-accent/90" aria-label="Send message">
+          <Button
+             onClick={handleSend}
+             disabled={!inputText.trim()} // Disable button if input is empty
+             className="bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-muted disabled:text-muted-foreground" aria-label="Send message">
             <Send className="h-4 w-4" />
           </Button>
         </div>

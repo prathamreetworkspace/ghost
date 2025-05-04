@@ -2,79 +2,84 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Remove the specific font-family here, it will be handled by Tailwind config and layout.tsx */
+/*
 body {
   font-family: Arial, Helvetica, sans-serif;
 }
+*/
 
 @layer base {
   :root {
     /* GhostLine Theme - Light Mode */
     --background: 210 40% 96.1%; /* #F3F4F6 Neutral Gray */
     --foreground: 215 28% 17%; /* #1F2937 Dark Gray */
-    --card: 210 40% 96.1%; /* Match background */
+    --card: 0 0% 100%; /* White card for better separation */
     --card-foreground: 215 28% 17%; /* Match foreground */
-    --popover: 210 40% 100%; /* Slightly lighter than bg */
+    --popover: 0 0% 100%; /* White popover */
     --popover-foreground: 215 28% 17%;
     --primary: 172 78% 42%; /* #14B8A6 Teal */
     --primary-foreground: 0 0% 100%; /* White for contrast on Teal */
     --secondary: 210 40% 90%; /* Slightly darker gray */
     --secondary-foreground: 215 28% 17%;
-    --muted: 210 40% 90%; /* Same as secondary */
-    --muted-foreground: 215 20% 45%; /* Lighter gray text */
+    --muted: 210 40% 92%; /* Slightly lighter muted */
+    --muted-foreground: 215 20% 55%; /* Adjusted muted text */
     --accent: 172 78% 42%; /* #14B8A6 Teal */
     --accent-foreground: 0 0% 100%; /* White for contrast on Teal */
-    --destructive: 0 84.2% 60.2%; /* Default Red */
+    --destructive: 0 72% 51%; /* Adjusted Red */
     --destructive-foreground: 0 0% 98%;
-    --border: 210 20% 85%; /* Lighter gray border */
-    --input: 210 20% 88%; /* Slightly lighter input bg */
-    --ring: 172 78% 42%; /* Teal for focus rings */
-    --chart-1: 172 70% 50%; /* Teal variations for charts */
+    --border: 210 20% 88%; /* Slightly darker border */
+    --input: 0 0% 100%; /* White input background */
+    --ring: 172 70% 55%; /* Slightly lighter Teal for focus rings */
+    --chart-1: 172 70% 50%;
     --chart-2: 172 60% 40%;
     --chart-3: 172 50% 30%;
-    --chart-4: 215 30% 60%; /* Gray variations */
+    --chart-4: 215 30% 60%;
     --chart-5: 215 25% 50%;
     --radius: 0.5rem;
-    --sidebar-background: 210 40% 94%; /* Slightly darker than main bg */
+    /* Sidebar Specific - Keeping original for now */
+    --sidebar-background: 210 40% 94%;
     --sidebar-foreground: 215 28% 17%;
-    --sidebar-primary: 172 78% 42%; /* Teal */
+    --sidebar-primary: 172 78% 42%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 172 78% 50%; /* Lighter Teal */
+    --sidebar-accent: 172 78% 50%;
     --sidebar-accent-foreground: 0 0% 100%;
     --sidebar-border: 210 20% 80%;
     --sidebar-ring: 172 78% 42%;
   }
 
   .dark {
-    /* GhostLine Theme - Dark Mode (Example, can be refined) */
-    --background: 215 28% 17%; /* #1F2937 Dark Gray */
-    --foreground: 210 40% 96.1%; /* #F3F4F6 Neutral Gray */
-    --card: 215 28% 17%; /* Match background */
-    --card-foreground: 210 40% 96.1%; /* Match foreground */
+    /* GhostLine Theme - Dark Mode */
+    --background: 215 28% 12%; /* Darker Gray */
+    --foreground: 210 40% 96.1%; /* Light Gray */
+    --card: 215 28% 17%; /* Slightly lighter card */
+    --card-foreground: 210 40% 96.1%;
     --popover: 215 28% 10%; /* Darker popover */
     --popover-foreground: 210 40% 96.1%;
-    --primary: 172 78% 50%; /* Lighter Teal for dark mode */
-    --primary-foreground: 215 28% 10%; /* Dark text on light teal */
-    --secondary: 215 28% 25%; /* Slightly lighter dark gray */
+    --primary: 172 78% 50%; /* Lighter Teal */
+    --primary-foreground: 215 28% 10%; /* Dark text */
+    --secondary: 215 28% 25%; /* Lighter dark gray */
     --secondary-foreground: 210 40% 96.1%;
-    --muted: 215 28% 25%; /* Same as secondary */
-    --muted-foreground: 210 30% 65%; /* Lighter gray text */
+    --muted: 215 28% 22%; /* Slightly lighter muted */
+    --muted-foreground: 210 30% 70%; /* Adjusted muted text */
     --accent: 172 78% 50%; /* Lighter Teal */
-    --accent-foreground: 215 28% 10%; /* Dark text on light teal */
-    --destructive: 0 62.8% 50.6%; /* Adjust red for dark mode */
+    --accent-foreground: 215 28% 10%; /* Dark text */
+    --destructive: 0 63% 50%; /* Adjusted Red */
     --destructive-foreground: 0 0% 98%;
     --border: 215 20% 30%; /* Darker border */
-    --input: 215 20% 28%; /* Slightly lighter input bg */
-    --ring: 172 78% 50%; /* Lighter Teal for focus rings */
-    --chart-1: 172 70% 60%; /* Adjusted Teal variations */
+    --input: 215 28% 20%; /* Darker input bg */
+    --ring: 172 70% 60%; /* Lighter Teal ring */
+    --chart-1: 172 70% 60%;
     --chart-2: 172 60% 50%;
     --chart-3: 172 50% 40%;
-    --chart-4: 210 30% 40%; /* Adjusted Gray variations */
+    --chart-4: 210 30% 40%;
     --chart-5: 210 25% 50%;
-    --sidebar-background: 215 28% 15%; /* Slightly lighter than main dark bg */
+    /* Sidebar Specific - Keeping original for now */
+    --sidebar-background: 215 28% 15%;
     --sidebar-foreground: 210 40% 96.1%;
-    --sidebar-primary: 172 78% 50%; /* Lighter Teal */
+    --sidebar-primary: 172 78% 50%;
     --sidebar-primary-foreground: 215 28% 10%;
-    --sidebar-accent: 172 78% 40%; /* Darker Teal */
+    --sidebar-accent: 172 78% 40%;
     --sidebar-accent-foreground: 210 40% 96.1%;
     --sidebar-border: 215 20% 25%;
     --sidebar-ring: 172 78% 50%;
@@ -86,7 +91,9 @@ body {
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans; /* Ensure font-sans (mapped to Geist) is applied */
+     /* Improve text rendering */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
-
