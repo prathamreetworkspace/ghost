@@ -10,6 +10,10 @@ import type { UserType, MessageType } from '@/app/page';
 const DEFAULT_SIGNALING_URL = 'http://localhost:3001';
 const SIGNALING_SERVER_URL = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || DEFAULT_SIGNALING_URL;
 
+// Log the URL being used for debugging connection issues
+console.log(`Using signaling server URL: ${SIGNALING_SERVER_URL}`);
+
+
 const iceConfiguration: RTCConfiguration = {
     iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -46,6 +50,7 @@ let onErrorCallback: (error: string) => void = () => {};
  * @returns {boolean} True if connected, false otherwise.
  */
 export function isConnected(): boolean {
+    // Check both the internal flag and the socket's actual connected status
     return _isConnected && socket?.connected === true;
 }
 
@@ -64,10 +69,21 @@ export function connect(
         onError: (error: string) => void;
     }
 ): Promise<void> {
+     // This promise primarily signals the *initial* successful connection.
+     // Subsequent errors are handled via callbacks.
      return new Promise((resolve, reject) => {
         if (_isConnected || socket?.connected) {
             console.warn('Attempted to connect when already connected or connecting.');
-            resolve(); // Indicate success as it's already connected
+            // If already considered connected, resolve immediately.
+            if (_isConnected) {
+                 resolve();
+            } else {
+                // If socket thinks it's connected but our state isn't, it's weird.
+                // Reject or force cleanup? For now, log and rely on potential cleanup.
+                console.error("Inconsistent state: socket connected but _isConnected is false.");
+                reject(new Error("Inconsistent connection state during connect attempt."));
+                 cleanup(); // Force cleanup
+            }
             return;
         }
         if (socket) {
@@ -90,14 +106,19 @@ export function connect(
             socket = io(SIGNALING_SERVER_URL, {
                 reconnectionAttempts: 3, // Limit automatic reconnection attempts
                 timeout: 10000, // Connection timeout
-                // Consider adding transports: ['websocket'] if polling is problematic
-                // transports: ['websocket'],
+                // Ensure transports are appropriate, websocket preferred
+                 transports: ['websocket', 'polling'],
+                 // Explicitly allow upgrades
+                 // upgrade: true, // This is usually true by default
+                 // Add extra debugging if needed
+                 // query: { userId: localUserId } // Send userId in query if server expects it
             });
         } catch (error: any) { // Added type annotation for error
             console.error("Error creating Socket.IO client:", error);
-            onErrorCallback(`Initialization failed: ${error.message}`);
+            const initErrorMsg = `Initialization failed: ${error.message}`;
+            onErrorCallback(initErrorMsg);
             cleanup(); // Ensure cleanup if io() throws
-            reject(new Error(`Failed to initialize Socket.IO: ${error.message}`));
+            reject(new Error(initErrorMsg)); // Reject the promise for initialization errors
             return;
         }
 
@@ -113,36 +134,51 @@ export function connect(
         });
 
         socket.on('connect_error', (error) => {
-            console.error('Signaling server connection error:', error.message);
+            console.error('Signaling server connection error:', error.message, error); // Log full error object
             // Provide a more user-friendly error message
             let errorMessage = `Failed to connect to signaling server (${SIGNALING_SERVER_URL}). `;
-            if (error.message.includes('xhr poll error') || error.message.includes('timeout')) {
-                errorMessage += 'Please ensure the server is running and check CORS configuration.';
-            } else {
+            // Check for common causes
+            if (error.message.includes('xhr poll error') || error.message.includes('timeout') || error.message.includes('transport close')) {
+                 errorMessage += 'Please ensure the server is running, accessible, and check its CORS configuration allows your origin.';
+            } else if (error.message.includes('websocket error')) {
+                 errorMessage += 'WebSocket connection failed. Check server logs and network/firewall settings.';
+            }
+             else {
                 errorMessage += `Details: ${error.message}`;
             }
-            onErrorCallback(errorMessage);
+            onErrorCallback(errorMessage); // Inform the UI/user
             cleanup(); // Clean up resources on failure
-            reject(new Error(errorMessage)); // Reject the promise
+            // *** Do NOT reject the promise here ***
+            // Rejecting here causes unhandled rejections if the calling code doesn't
+            // specifically catch async errors *after* the initial await.
+            // The error state is handled by the onErrorCallback.
+            // reject(new Error(errorMessage)); // REMOVED
         });
 
-         socket.on('disconnect', (reason) => {
-            console.log('Disconnected from signaling server. Reason:', reason);
-             // Only call error callback for unexpected disconnects
-             if (reason !== 'io client disconnect') { // "io client disconnect" is triggered by calling disconnect()
-                 onErrorCallback(`Lost connection to signaling server: ${reason}.`);
+         socket.on('disconnect', (reason, description) => {
+            console.log('Disconnected from signaling server. Reason:', reason, description || '');
+             const wasConnected = _isConnected; // Check state *before* cleanup
+             _isConnected = false; // Update state immediately
+
+             // Only call error callback for unexpected disconnects while we thought we were connected
+             if (wasConnected && reason !== 'io client disconnect') { // "io client disconnect" is triggered by calling disconnect() locally
+                let errorReason = reason;
+                if (reason === 'transport close') errorReason = 'Connection lost (transport closed)';
+                if (reason === 'ping timeout') errorReason = 'Connection timed out';
+                onErrorCallback(`Lost connection to signaling server: ${errorReason}.`);
              }
-            cleanup(); // Clean up peers and socket state
-             // Important: The UI callback 'onDisconnectedCallback' should primarily be triggered
-             // by the user initiating disconnect via the disconnect() function below,
-             // or after errors in the connect phase. Handling unexpected disconnects
-             // might require different UI logic (e.g., showing a reconnecting state).
-             // We call it here to ensure the UI reflects the disconnected state
-             // even for unexpected server-side disconnects.
+             // Ensure cleanup happens regardless of the reason
+             cleanup();
+             // Notify the UI of disconnection, allowing it to reset state.
+             // This is important even for expected disconnects.
              onDisconnectedCallback();
          });
 
         socket.on('online-users', (users: UserType[]) => {
+            if (!_isConnected) {
+                 console.warn("Received 'online-users' but not connected. Ignoring.");
+                 return;
+            }
             console.log('Received online users:', users);
             onUserListUpdateCallback(users); // Update the UI list
             // Filter out self before processing
@@ -150,6 +186,7 @@ export function connect(
 
             // Initiate connections to new users not already peered
              otherUsers.forEach(user => {
+                 // Double-check if we are already attempting/connected
                  if (!peers.has(user.id) && !dataChannels.has(user.id)) { // Check both maps
                      console.log(`New user detected: ${user.name} (${user.id}). Initiating peer connection.`);
                      createPeerConnection(user.id, true); // true: we are the initiator
@@ -168,14 +205,15 @@ export function connect(
 
         // Handle incoming WebRTC offers
         socket.on('offer', async (data: { senderId: string; senderName: string; offer: RTCSessionDescriptionInit }) => {
+            if (!_isConnected) return; // Ignore if not connected
             const { senderId, senderName, offer } = data;
              if (senderId === localUserId) return; // Sanity check: ignore offers from self
 
             console.log(`Received offer from ${senderName} (${senderId})`);
             // Ensure peer connection exists. Create if receiving offer first.
-            const pc = createPeerConnection(senderId, false); // false: we are NOT the initiator
-
              try {
+                const pc = createPeerConnection(senderId, false); // false: we are NOT the initiator
+
                  // Set the received offer as the remote description
                  await pc.setRemoteDescription(new RTCSessionDescription(offer));
                  console.log(`Set remote description (offer) from ${senderId}`);
@@ -198,6 +236,7 @@ export function connect(
 
         // Handle incoming WebRTC answers
         socket.on('answer', async (data: { senderId: string; answer: RTCSessionDescriptionInit }) => {
+             if (!_isConnected) return; // Ignore if not connected
             const { senderId, answer } = data;
              if (senderId === localUserId) return; // Ignore answers from self
 
@@ -217,34 +256,41 @@ export function connect(
                  }
             } else {
                 console.warn(`Received answer from ${senderId}, but peer connection not found or in unexpected state: ${pc?.signalingState}`);
+                 if (pc) {
+                     // If PC exists but state is wrong, maybe it closed/failed?
+                     onErrorCallback(`Received unexpected answer from a peer (state: ${pc.signalingState}).`);
+                     closePeerConnection(senderId); // Clean up potentially broken state
+                 }
             }
         });
 
         // Handle incoming ICE candidates
         socket.on('ice-candidate', async (data: { senderId: string; candidate: RTCIceCandidateInit | null }) => {
+             if (!_isConnected) return; // Ignore if not connected
             const { senderId, candidate } = data;
              if (senderId === localUserId) return; // Ignore own candidates
 
             const pc = peers.get(senderId);
             if (pc) {
+                 // Ignore candidates if connection is closing/closed/failed
+                 if (['closed', 'failed', 'disconnected'].includes(pc.connectionState)) {
+                     console.warn(`Ignoring ICE candidate from ${senderId} because connection state is ${pc.connectionState}`);
+                     return;
+                 }
+
                  if (candidate) {
                      try {
-                         // Add the ICE candidate if remote description is set
-                         // Browsers often handle queueing internally if description isn't set yet,
-                         // but adding an explicit check or queue can be more robust.
-                         if (pc.remoteDescription) {
-                             await pc.addIceCandidate(new RTCIceCandidate(candidate));
-                             // console.log(`Added ICE candidate from ${senderId}`);
-                         } else {
-                             console.warn(`Received ICE candidate from ${senderId} before remote description set. Relying on browser queueing.`);
-                             // TODO: Implement manual queueing if issues arise.
-                         }
+                         // Add the ICE candidate. Browsers generally handle queueing if remote description isn't set yet.
+                         await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                         // console.log(`Added ICE candidate from ${senderId}`);
                      } catch (error: any) { // Added type annotation for error
-                         // Ignore benign errors like "Error processing ICE candidate" which can happen
-                         // if candidates arrive out of order or state changes rapidly.
-                         if (!error.message.includes("Error processing ICE candidate")) {
+                         // Ignore benign errors like "Error processing ICE candidate" or adding candidate before description set.
+                         if (!error.message.includes("Error processing ICE candidate") && !error.message.includes("remote description")) {
                              console.error(`Error adding ICE candidate from ${senderId}:`, error);
                              onErrorCallback(`Error processing network candidate from peer: ${error.message}`);
+                         } else {
+                              // Log benign errors for debugging but don't spam user
+                              // console.warn(`Benign error adding ICE candidate from ${senderId}: ${error.message}`);
                          }
                      }
                  } else {
@@ -256,11 +302,16 @@ export function connect(
             }
         });
 
-        // Handle potential errors during socket setup more gracefully
+        // Handle potential generic socket errors more gracefully
         socket.on('error', (error) => {
             console.error('Generic Socket error:', error);
-            onErrorCallback(`Signaling server error: ${error.message || error}`);
-            // Consider if cleanup is needed depending on the error type
+            // Avoid redundant error messages if already handled by connect_error or disconnect
+            if (_isConnected) { // Only report if we thought we were connected
+                 onErrorCallback(`Signaling server communication error: ${error.message || error}`);
+                 // Consider if cleanup is needed depending on the error type and state
+                 cleanup(); // Be safe and cleanup on unknown errors
+                 onDisconnectedCallback(); // Ensure UI resets
+            }
         });
     });
 }
@@ -271,12 +322,19 @@ export function connect(
  */
 export function disconnect(): void {
     console.log('User initiated disconnect...');
-    if (!_isConnected && !socket) {
+    if (!socket && !_isConnected) {
         console.warn('Disconnect called but not connected.');
         return; // Nothing to do
     }
+    const wasConnected = _isConnected; // Capture state before cleanup
+    _isConnected = false; // Set immediately to prevent race conditions
     cleanup(); // Perform all necessary cleanup
-    onDisconnectedCallback(); // Notify the UI that disconnection is complete
+
+    // Only call the disconnect callback if we were actually connected,
+    // prevents duplicate calls if cleanup was triggered by an error first.
+    if (wasConnected) {
+         onDisconnectedCallback(); // Notify the UI that disconnection is complete
+    }
 }
 
 /**
@@ -296,7 +354,7 @@ export function broadcastMessage(messageText: string): void {
         return;
     }
      if (!isConnected()) {
-         console.error('Cannot broadcast message: Not connected to signaling/peers.');
+         console.warn('Cannot broadcast message: Not connected to signaling/peers.');
          onErrorCallback('Cannot send message: not connected.');
          return;
      }
@@ -319,17 +377,29 @@ export function broadcastMessage(messageText: string): void {
                 // console.log(`Broadcast message successfully sent to ${peerId}`);
             } catch (error: any) { // Added type annotation for error
                 console.error(`Failed to send broadcast message to ${peerId}:`, error);
-                // Maybe notify user about specific peer send failure?
-                onErrorCallback(`Failed to send message to some peers: ${error.message}`);
+                onErrorCallback(`Failed to send message to a peer: ${error.message}`);
+                // Consider closing the connection to this specific peer if send fails repeatedly?
+                // closePeerConnection(peerId);
             }
         } else {
             console.warn(`Data channel with peer ${peerId} not open for broadcast. State: ${dc.readyState}`);
+            // Maybe remove stale data channel refs if state is unexpected?
+            if (dc.readyState === 'closed' || dc.readyState === 'closing') {
+                 dataChannels.delete(peerId);
+                 if (!peers.has(peerId)) { // If peer connection also gone, it's expected
+                     // console.log(`Cleaned up closed data channel ref for ${peerId}`);
+                 } else {
+                     console.warn(`Data channel closed for ${peerId} but peer connection exists.`);
+                     // Consider closing the peer connection too for consistency
+                     // closePeerConnection(peerId);
+                 }
+            }
         }
     });
 
     if (!sentToAnyPeer && dataChannels.size > 0) {
         console.warn('Broadcast attempted, but no data channels were open.');
-        onErrorCallback('Could not send message: no peer connections currently open.');
+        onErrorCallback('Could not send message: no active peer connections.');
     } else if (dataChannels.size === 0) {
         console.log("No peers connected to broadcast the message to.");
         // Optionally inform the user they are alone in the chat
@@ -347,28 +417,49 @@ export function broadcastMessage(messageText: string): void {
 /**
  * Creates or retrieves an RTCPeerConnection for a given peer.
  * Sets up all necessary event handlers for the peer connection.
+ * Ensures connection is not made to self.
  * @param peerId The ID of the peer to connect to.
  * @param isInitiator True if the local client is initiating the connection (sending offer).
  * @returns The created or existing RTCPeerConnection.
+ * @throws {Error} if attempting to connect to self.
  */
 function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConnection {
-    if (peers.has(peerId)) {
-        // console.log(`Peer connection with ${peerId} already exists.`);
-        return peers.get(peerId)!;
-    }
      if (peerId === localUserId) {
          console.error("Attempted to create peer connection with self.");
+         // Throw or just return null/undefined and handle upstream? Throwing is clearer.
          throw new Error("Cannot create peer connection with self.");
      }
 
+    // Check if a connection *or* data channel already exists to prevent duplicates
+    if (peers.has(peerId) || dataChannels.has(peerId)) {
+        console.log(`Connection logic already initiated or complete for ${peerId}. Retrieving existing PC or returning.`);
+        // Return existing PC if it exists, otherwise log that DC exists (implies PC should too or is being set up)
+        const existingPc = peers.get(peerId);
+        if (existingPc) {
+            return existingPc;
+        } else {
+            // This state (DC exists but PC doesn't) should ideally not happen. Log warning.
+             console.warn(`Data channel exists for ${peerId}, but peer connection reference is missing. Potential race condition.`);
+             // How to recover? Maybe try closing/cleaning up DC and recreating PC? Risky.
+             // For now, just log and potentially let subsequent logic fail.
+             throw new Error(`Inconsistent state for peer ${peerId}: data channel exists, but PeerConnection doesn't.`);
+        }
+    }
+
+
     console.log(`Creating ${isInitiator ? 'initiating' : 'receiving'} peer connection with ${peerId}`);
     const pc = new RTCPeerConnection(iceConfiguration);
-    peers.set(peerId, pc);
+    peers.set(peerId, pc); // Add *before* setting up listeners to handle potential races
 
     // --- PeerConnection Event Handlers ---
 
     // Handle ICE candidates generated locally
     pc.onicecandidate = (event) => {
+        // Check if socket is still valid before emitting
+        if (!socket || !socket.connected) {
+             console.warn(`Socket not connected. Cannot send ICE candidate to ${peerId}.`);
+             return;
+        }
         if (event.candidate) {
             // Send the candidate to the remote peer via the signaling server
             // console.log(`Sending ICE candidate to ${peerId}:`, event.candidate.type);
@@ -387,34 +478,37 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
 
     // Monitor the overall connection state
     pc.onconnectionstatechange = () => {
-        console.log(`Peer connection state with ${peerId}: ${pc.connectionState}`);
-        switch (pc.connectionState) {
+        const state = pc.connectionState;
+        console.log(`Peer connection state with ${peerId}: ${state}`);
+        switch (state) {
             case 'connected':
                 console.log(`WebRTC connection established with peer ${peerId}`);
                 // Data channel should be open or opening shortly
+                // Could check dc.readyState here if needed
                 break;
             case 'failed':
                 console.error(`WebRTC connection with ${peerId} failed.`);
                 onErrorCallback(`Connection attempt with a peer failed.`);
-                // Attempt to restart ICE negotiation? Often simpler to just close and retry signaling.
-                closePeerConnection(peerId); // Clean up failed connection
-                 // Optional: Attempt to re-initiate connection after a delay
-                 // setTimeout(() => {
-                 //     if (isConnected() && !peers.has(peerId)) { // Check if still connected to signaling
-                 //         console.log(`Attempting to reconnect to ${peerId} after failure...`);
-                 //         createPeerConnection(peerId, true); // Try initiating again
-                 //     }
-                 // }, 5000); // 5 second delay
+                closePeerConnection(peerId); // Clean up failed connection immediately
                 break;
             case 'disconnected':
+                // This state means connectivity is lost, but the browser might recover.
                 console.warn(`WebRTC connection with peer ${peerId} disconnected. Might recover...`);
-                // Connection was lost, browser might try to reconnect automatically.
-                 onErrorCallback(`Connection with a peer was interrupted. Attempting recovery...`);
-                 // If recovery doesn't happen, may need manual intervention or rely on signaling refresh.
+                 onErrorCallback(`Connection with a peer was interrupted.`);
+                // Often, it's better to treat 'disconnected' as 'failed' and close proactively
+                // unless specific recovery logic (like ICE restart) is implemented.
+                // setTimeout(() => { // Add a short delay to see if it recovers
+                //     if (pc.connectionState === 'disconnected') {
+                //         console.warn(`Connection with ${peerId} did not recover. Closing.`);
+                //         closePeerConnection(peerId);
+                //     }
+                // }, 5000); // 5 seconds grace period
+                 // Proactive closure:
+                 closePeerConnection(peerId);
                 break;
             case 'closed':
                 console.log(`WebRTC connection with ${peerId} closed.`);
-                // Connection is fully closed, ensure cleanup.
+                // Ensure cleanup is called, although closePeerConnection should handle it.
                 closePeerConnection(peerId);
                 break;
              case 'connecting':
@@ -422,6 +516,9 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
                 break;
              case 'new':
                  console.log(`WebRTC connection with ${peerId} is new.`);
+                break;
+             default:
+                 console.log(`Unhandled peer connection state with ${peerId}: ${state}`);
                 break;
 
         }
@@ -437,35 +534,56 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
         // Initiator creates the data channel
         console.log(`Creating data channel 'chat' to ${peerId}`);
         // Use reliable, ordered delivery by default
-        const dc = pc.createDataChannel('chat', { negotiated: false }); // Let browser handle negotiation
-        setupDataChannel(dc, peerId); // Attach common event listeners
-        dataChannels.set(peerId, dc); // Store reference
+        try {
+             const dc = pc.createDataChannel('chat', { negotiated: false }); // Let browser handle negotiation
+             setupDataChannel(dc, peerId); // Attach common event listeners
+             dataChannels.set(peerId, dc); // Store reference *before* offer
 
-         // Create and send offer *after* potentially creating data channel
-         pc.createOffer()
-             .then(offer => pc.setLocalDescription(offer))
-             .then(() => {
-                 console.log(`Sending offer to ${peerId}`);
-                 // Send the offer via the signaling server
-                 socket?.emit('offer', {
-                     targetId: peerId,
-                     senderName: localUsername, // Send sender name along with offer
-                     offer: pc.localDescription
+             // Create and send offer *after* creating data channel
+             pc.createOffer()
+                 .then(offer => pc.setLocalDescription(offer))
+                 .then(() => {
+                      if (!socket || !socket.connected) {
+                         console.warn(`Socket disconnected before offer could be sent to ${peerId}.`);
+                         throw new Error("Signaling channel unavailable.");
+                      }
+                     console.log(`Sending offer to ${peerId}`);
+                     // Send the offer via the signaling server
+                     socket?.emit('offer', {
+                         targetId: peerId,
+                         senderName: localUsername, // Send sender name along with offer
+                         offer: pc.localDescription
+                     });
+                 })
+                 .catch(error => {
+                     console.error(`Error creating or sending offer for ${peerId}:`, error);
+                     onErrorCallback(`Error initiating connection: ${error.message}`);
+                     closePeerConnection(peerId); // Clean up failed attempt
                  });
-             })
-             .catch(error => {
-                 console.error(`Error creating or sending offer for ${peerId}:`, error);
-                 onErrorCallback(`Error initiating connection: ${error.message}`);
-                 closePeerConnection(peerId); // Clean up failed attempt
-             });
+         } catch (error: any) {
+             console.error(`Error creating data channel for ${peerId}:`, error);
+             onErrorCallback(`Failed to create data channel: ${error.message}`);
+             closePeerConnection(peerId); // Cleanup PC if DC creation fails
+         }
 
     } else {
         // Receiver waits for the remote peer to establish the data channel
         pc.ondatachannel = (event) => {
-            console.log(`Data channel 'chat' received from ${peerId}`);
-            const dc = event.channel;
-            setupDataChannel(dc, peerId); // Attach common event listeners
-            dataChannels.set(peerId, dc); // Store reference
+            console.log(`Data channel '${event.channel.label}' received from ${peerId}`);
+             if (event.channel.label === 'chat') {
+                 const dc = event.channel;
+                 setupDataChannel(dc, peerId); // Attach common event listeners
+                 // Ensure we don't overwrite an existing DC reference if somehow triggered twice
+                 if (!dataChannels.has(peerId)) {
+                    dataChannels.set(peerId, dc); // Store reference
+                 } else {
+                    console.warn(`Duplicate datachannel event for ${peerId}. Ignoring.`);
+                 }
+            } else {
+                console.warn(`Received unexpected data channel from ${peerId}: ${event.channel.label}`);
+                // Close unexpected channels?
+                // event.channel.close();
+            }
         };
     }
 
@@ -479,21 +597,36 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
  * @param peerId The ID of the peer associated with this data channel.
  */
 function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
+    // Sanity check state before adding listeners
+    if (dc.readyState !== 'connecting' && dc.readyState !== 'open') {
+         console.warn(`Setting up data channel for ${peerId} in unexpected state: ${dc.readyState}`);
+         // If closed/closing, maybe don't add listeners?
+         if (dc.readyState === 'closed' || dc.readyState === 'closing') return;
+    }
+
     dc.onopen = () => {
-        console.log(`Data channel with ${peerId} is open and ready.`);
+        console.log(`Data channel with ${peerId} is open (state: ${dc.readyState}).`);
+        // Ensure PC state is also connected for full readiness
+        const pcState = peers.get(peerId)?.connectionState;
+        if (pcState !== 'connected') {
+            console.warn(`Data channel open for ${peerId}, but PC state is ${pcState}.`);
+        }
         // Optional: Send a confirmation or trigger UI update
         // Example: sendMessageToPeer(peerId, JSON.stringify({ type: 'system', text: 'Chat connection established!' }));
     };
 
     dc.onclose = () => {
-        console.log(`Data channel with ${peerId} closed.`);
-        // The peer connection state change usually handles cleanup, but ensure DC ref is removed.
+        console.log(`Data channel with ${peerId} closed (state: ${dc.readyState}).`);
+        // Remove the reference from our map
         dataChannels.delete(peerId);
-        // Check if the associated peer connection is also closed/failed
-        if (!peers.has(peerId) || ['closed', 'failed'].includes(peers.get(peerId)?.connectionState ?? 'closed')) {
-            console.log(`Peer connection for ${peerId} also closed/failed.`);
-        } else {
-            console.warn(`Data channel closed for ${peerId}, but peer connection state is: ${peers.get(peerId)?.connectionState}`);
+        // PeerConnection state change handler should manage closing the PC itself.
+        // Avoid calling closePeerConnection here unless absolutely necessary
+        // to prevent potential recursive loops or premature closure.
+        const pc = peers.get(peerId);
+        if (pc && pc.connectionState !== 'closed' && pc.connectionState !== 'failed') {
+             console.warn(`Data channel closed for ${peerId}, but peer connection state is still ${pc.connectionState}. Closing PC.`);
+             // If DC closes unexpectedly, likely the PC should close too.
+             closePeerConnection(peerId);
         }
     };
 
@@ -502,6 +635,8 @@ function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
         const error = (errorEvent as any).error; // Cast to any to access error property if needed
         console.error(`Data channel error with ${peerId}:`, error?.message || errorEvent);
         onErrorCallback(`Network data channel error with peer: ${error?.message || 'Unknown data channel error'}`); // Simplify message
+        // Consider closing the connection on error? Depends on the error type.
+        // closePeerConnection(peerId);
     };
 
 
@@ -510,7 +645,8 @@ function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
         // console.log(`Raw message received from ${peerId}:`, event.data); // Log raw data for debugging
         try {
             if (typeof event.data !== 'string') {
-                 console.warn(`Received non-string message from ${peerId}:`, event.data);
+                 console.warn(`Received non-string message from ${peerId}: Type ${typeof event.data}`);
+                 // Handle binary data if needed (e.g., ArrayBuffer, Blob)
                  return; // Ignore non-string messages for now
             }
             const message = JSON.parse(event.data) as MessageType;
@@ -540,56 +676,78 @@ function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
 
 /**
  * Closes the peer connection and removes associated data channel and peer references.
+ * Safe to call multiple times.
  * @param peerId The ID of the peer whose connection should be closed.
  */
 function closePeerConnection(peerId: string): void {
     const pc = peers.get(peerId);
+    const dc = dataChannels.get(peerId);
+
+    // Close data channel first if it exists and isn't already closing/closed
+    if (dc && dc.readyState !== 'closed' && dc.readyState !== 'closing') {
+        // console.log(`Closing data channel with ${peerId} (State: ${dc.readyState})`);
+        dc.close();
+    }
+    // Always remove the DC reference after attempting close
+    dataChannels.delete(peerId);
+
+    // Close peer connection if it exists and isn't already closing/closed
     if (pc) {
-        // Avoid multiple close attempts or logging if already closed
-        if (pc.connectionState !== 'closed') {
+        if (pc.connectionState !== 'closed' && pc.connectionState !== 'failed') {
              console.log(`Closing peer connection with ${peerId} (State: ${pc.connectionState})`);
+             // Remove listeners before closing to prevent potential late events? Sometimes needed.
+             // pc.onicecandidate = null;
+             // pc.onconnectionstatechange = null;
+             // pc.onsignalingstatechange = null;
+             // pc.ondatachannel = null;
              pc.close(); // Gracefully close the connection
         }
-        peers.delete(peerId); // Remove from map
+        // Always remove the PC reference after attempting close
+        peers.delete(peerId);
     }
 
-    // Ensure data channel reference is also removed, even if onclose didn't fire
-    if (dataChannels.has(peerId)) {
-        // console.log(`Removing data channel reference for closed peer ${peerId}`);
-        dataChannels.delete(peerId);
-    }
+    // console.log(`Finished cleanup attempt for peer ${peerId}`);
 }
 
 /**
  * Cleans up all WebRTC peer connections, data channels, and disconnects the socket.
- * Resets internal state variables.
+ * Resets internal state variables. Safe to call multiple times.
  */
 function cleanup(): void {
     console.log('Performing full WebRTC and Socket cleanup...');
-    // Close all active peer connections
-    peers.forEach((pc, peerId) => {
-        closePeerConnection(peerId); // Use helper to ensure proper closure
+
+    // Close all active peer connections (this will also trigger data channel closure)
+    // Iterate over a copy of keys to avoid issues while modifying the map
+    const peerIds = Array.from(peers.keys());
+    peerIds.forEach(peerId => {
+        closePeerConnection(peerId);
     });
-    // Clear maps (should be empty after closing PCs, but belt-and-suspenders)
-    peers.clear();
-    dataChannels.clear();
+
+    // Ensure maps are empty after closing PCs
+    if (peers.size > 0 || dataChannels.size > 0) {
+        console.warn(`Maps not empty after cleanup loop: Peers=${peers.size}, DCs=${dataChannels.size}. Forcing clear.`);
+        peers.clear();
+        dataChannels.clear();
+    }
 
     // Remove all socket listeners and disconnect
     if (socket) {
+        const currentSocket = socket; // Capture ref in case socket is reassigned during async ops
         console.log('Removing socket listeners and disconnecting socket...');
-        socket.removeAllListeners(); // Remove all listeners for safety
-        if (socket.connected) {
-             socket.disconnect(); // Disconnect if connected
+        currentSocket.removeAllListeners(); // Remove all listeners for safety
+        if (currentSocket.connected) {
+             currentSocket.disconnect(); // Disconnect if connected
         }
-        socket = null; // Release the socket object
+        // Only nullify if it's the currently active socket instance
+        if (socket === currentSocket) {
+             socket = null; // Release the socket object reference
+        }
     }
 
-    // Reset state flags and user info
-    _isConnected = false;
-    // Keep localUserId/localUsername if disconnect might be temporary?
-    // For full cleanup, reset them:
-    // localUserId = null;
-    // localUsername = null;
+    // Reset state flags, but potentially keep user info if reconnect is desired
+     _isConnected = false;
+    // localUserId = null; // Reset if needed
+    // localUsername = null; // Reset if needed
 
     console.log('Cleanup complete.');
 }
@@ -597,14 +755,28 @@ function cleanup(): void {
 // --- Debugging ---
 // Expose minimal state for debugging in browser console (use with caution)
 if (typeof window !== 'undefined') {
-  // @ts-ignore
+  // @ts-ignore Assign to window for easy access
   window.ghostline_debug = {
-    getPeers: () => Array.from(peers.keys()),
-    getDataChannels: () => Array.from(dataChannels.keys()).map(id => ({ id, state: dataChannels.get(id)?.readyState })),
+    getPeers: () => Array.from(peers.keys()).map(id => ({ id, state: peers.get(id)?.connectionState, signalingState: peers.get(id)?.signalingState })),
+    getDataChannels: () => Array.from(dataChannels.keys()).map(id => ({ id, state: dataChannels.get(id)?.readyState, label: dataChannels.get(id)?.label })),
     getSocket: () => socket,
     isConnected: () => isConnected(),
+    getInternalConnectedFlag: () => _isConnected,
     getLocalUserId: () => localUserId,
     getLocalUsername: () => localUsername,
     forceDisconnect: () => disconnect(),
+    forceCleanup: () => cleanup(),
+     forceConnectAttempt: (id: string, name: string) => {
+         console.log("DEBUG: Forcing connect attempt...");
+         // Minimal callbacks for debug connect
+         connect(id, name, {
+             onConnected: () => console.log("DEBUG: Connected"),
+             onDisconnected: () => console.log("DEBUG: Disconnected"),
+             onUserListUpdate: (u) => console.log("DEBUG: Users:", u),
+             onMessageReceived: (m) => console.log("DEBUG: Message:", m),
+             onError: (e) => console.error("DEBUG: Error:", e),
+         }).catch(err => console.error("DEBUG: Connect promise rejected:", err));
+     }
   };
 }
+
