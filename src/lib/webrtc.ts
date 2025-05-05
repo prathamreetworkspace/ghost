@@ -118,10 +118,10 @@ export function connect(
             console.warn('Attempted to connect when already connected or connecting.');
             if (_isConnected) {
                  resolve(); // Already connected, resolve immediately
+                 return; // Prevent further execution
             } else {
-                console.error("Inconsistent state: socket connected but _isConnected is false. Forcing cleanup.");
+                console.warn("Inconsistent state: socket connected but _isConnected is false. Forcing cleanup.");
                 cleanup(); // Force cleanup and let the new connection attempt proceed
-                // Do not reject here, allow the new attempt to potentially succeed
             }
             // Allow the connection attempt to proceed even if warning was logged.
         }
@@ -188,6 +188,10 @@ export function connect(
             // *** IMPORTANT: Do NOT reject the promise here ***
             // Let the calling code know via the onError callback and state change.
             // Rejecting here leads to unhandled promise rejections in the UI component's async join handler.
+            // Instead of rejecting, we might resolve or do nothing, relying on the error callback
+            // to signal failure to the UI layer. Let's resolve to fulfill the promise contract,
+            // but the UI should check the connectionStatus state set by onErrorCallback.
+            resolve(); // Fulfill promise, but error is signaled via callback
         });
 
          socket.on('disconnect', (reason, description) => {
@@ -434,7 +438,10 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
             return existingPc;
         } else {
              console.warn(`Data channel exists for ${peerId}, but peer connection reference is missing. Potential race condition.`);
-             throw new Error(`Inconsistent state for peer ${peerId}: data channel exists, but PeerConnection doesn't.`);
+             // Do not throw error, attempt to recreate PC gracefully
+             peers.delete(peerId); // Clean up potential inconsistent state
+             dataChannels.delete(peerId); // Clean up potential inconsistent state
+             console.log(`Cleaned potentially inconsistent state for ${peerId}. Proceeding with new PC creation.`);
         }
     }
 
@@ -467,6 +474,13 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
         switch (state) {
             case 'connected':
                 console.log(`WebRTC connection established with peer ${peerId}`);
+                // Ensure data channel is open or opening
+                 const dc = dataChannels.get(peerId);
+                 if (dc && dc.readyState !== 'open') {
+                     console.warn(`Peer connected, but data channel state is ${dc.readyState}. Waiting for 'open'.`);
+                 } else if (!dc) {
+                     console.warn(`Peer connected, but no data channel found for ${peerId}. Should have been created/received.`);
+                 }
                 break;
             case 'failed':
                 console.error(`WebRTC connection with ${peerId} failed.`);
@@ -480,7 +494,7 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
                 break;
             case 'closed':
                 console.log(`WebRTC connection with ${peerId} closed.`);
-                closePeerConnection(peerId);
+                closePeerConnection(peerId); // Ensure cleanup here too
                 break;
              case 'connecting':
                  console.log(`WebRTC connection with ${peerId} is connecting...`);
@@ -516,7 +530,7 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
                      console.log(`Sending offer to ${peerId}`);
                      socket?.emit('offer', {
                          targetId: peerId,
-                         senderName: localUsername,
+                         senderName: localUsername, // Send local username
                          offer: pc.localDescription
                      });
                  })
@@ -539,7 +553,9 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
                  if (!dataChannels.has(peerId)) {
                     dataChannels.set(peerId, dc);
                  } else {
-                    console.warn(`Duplicate datachannel event for ${peerId}. Ignoring.`);
+                    console.warn(`Duplicate datachannel event for ${peerId}. Re-using existing.`);
+                    // Ensure setup is run on the original DC as well, just in case
+                     setupDataChannel(dataChannels.get(peerId)!, peerId);
                  }
             } else {
                 console.warn(`Received unexpected data channel from ${peerId}: ${event.channel.label}`);
@@ -557,6 +573,12 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
  * @param peerId The ID of the peer associated with this data channel.
  */
 function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
+    // Remove previous listeners if setting up again (e.g., due to race conditions)
+    dc.onopen = null;
+    dc.onclose = null;
+    dc.onerror = null;
+    dc.onmessage = null;
+
     if (dc.readyState !== 'connecting' && dc.readyState !== 'open') {
          console.warn(`Setting up data channel for ${peerId} in unexpected state: ${dc.readyState}`);
          if (dc.readyState === 'closed' || dc.readyState === 'closing') return;
@@ -577,6 +599,8 @@ function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
         if (pc && pc.connectionState !== 'closed' && pc.connectionState !== 'failed') {
              console.warn(`Data channel closed for ${peerId}, but peer connection state is still ${pc.connectionState}. Closing PC.`);
              closePeerConnection(peerId);
+        } else {
+             console.log(`Data channel closed for ${peerId}. Peer connection already closed or failed.`);
         }
     };
 
@@ -584,6 +608,8 @@ function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
         const error = (errorEvent as any).error;
         console.error(`Data channel error with ${peerId}:`, error?.message || errorEvent);
         onErrorCallback(`Network data channel error with peer: ${error?.message || 'Unknown error'}`);
+        // Consider closing the connection on data channel errors
+        // closePeerConnection(peerId);
     };
 
 
@@ -623,6 +649,7 @@ function closePeerConnection(peerId: string): void {
     const dc = dataChannels.get(peerId);
 
     if (dc && dc.readyState !== 'closed' && dc.readyState !== 'closing') {
+        console.log(`Closing data channel with ${peerId} (State: ${dc.readyState})`);
         dc.close();
     }
     dataChannels.delete(peerId);
@@ -633,6 +660,9 @@ function closePeerConnection(peerId: string): void {
              pc.close();
         }
         peers.delete(peerId);
+    } else {
+        // If PC ref is missing but DC existed, log it.
+        if (dc) console.warn(`Closed lingering data channel for ${peerId}, but PeerConnection reference was already removed.`);
     }
 }
 

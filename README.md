@@ -134,16 +134,16 @@ If you encounter errors like `Failed to connect to signaling server`, `xhr poll 
 4.  **Check Browser Developer Console (Network Tab):**
     *   Open Developer Tools (F12) in your browser.
     *   Go to the **Network** tab.
-    *   Filter for requests to your signaling server URL (e.g., `localhost:3001`).
+    *   Filter for requests to your signaling server URL (e.g., `localhost:3001`). Look for WebSocket (WS) connections or HTTP requests (if using polling fallback).
     *   Look for **failed requests** (status 4xx, 5xx, or `(failed)`).
     *   **Click on a failed request.** Check the **Headers** tab. Look for `Access-Control-Allow-Origin`. If it's missing or doesn't match `http://localhost:9002`, it's a CORS problem (Step 3). If the status is 404 (Not Found), the URL might be wrong (Step 2). If it's 500 (Server Error), check the signaling server logs (Step 5). If it says `ERR_CONNECTION_REFUSED`, the server isn't running or is blocked (Step 1 or 6).
 
 5.  **Check Signaling Server LOGS:**
-    *   **Add `console.log` statements:** Add logging inside *all* your signaling server's event handlers (`connection`, `join`, `offer`, `answer`, `ice-candidate`, `disconnect`).
+    *   **Add `console.log` statements:** Add logging inside *all* your signaling server's event handlers (`connection`, `join`, `offer`, `answer`, `ice-candidate`, `disconnect`). *This is the most important step for debugging server-side issues.*
     *   **Observe Output:** When you try to connect from the Next.js app, what does the signaling server log?
         *   Does it log `Socket ... connected`? If not, the connection isn't even reaching the server (check URL, firewall, CORS).
         *   Does it log receiving the `join` event?
-        *   When errors occur, are there any specific error messages logged *on the server side*? This is crucial for debugging server issues.
+        *   When errors occur, are there any specific error messages logged *on the server side*? This is crucial for debugging server issues like crashes or internal logic errors.
 
 6.  **Firewall/Network Issues:**
     *   Ensure no firewall on your computer or network is blocking incoming connections to the signaling server port (e.g., 3001).
@@ -156,10 +156,9 @@ If you encounter errors like `Failed to connect to signaling server`, `xhr poll 
 
 -   **Users don't see each other / Messages not sending:**
     1.  **Verify Signaling Flow (Server Logs):** Use your detailed signaling server logs (Step 5 above) to confirm that `join`, `offer`, `answer`, and `ice-candidate` events are being correctly relayed between the peers. If a user joins, does the server log it and emit `online-users`? When an offer is sent, does the server log receiving it and forwarding it to the correct target? If signaling isn't working, P2P connections won't establish.
-    2.  **Check Browser Console (Both Peers):** Look for WebRTC-specific errors (e.g., `Failed to set remote description`, `ICE connection failed`, Data Channel errors) in the console tab on *both* browsers involved in the chat.
+    2.  **Check Browser Console (Both Peers):** Look for WebRTC-specific errors (e.g., `Failed to set remote description`, `ICE connection failed`, Data Channel errors) in the console tab on *both* browsers involved in the chat. Also check the `ghostline_debug` object in the console (e.g., `window.ghostline_debug.getPeers()`, `window.ghostline_debug.getDataChannels()`).
     3.  **STUN/TURN Servers:** The default configuration uses Google's public STUN server. This works for many networks, but complex NATs might require a TURN server for relaying traffic. If peers are on very different/restrictive networks, this might be the issue. Setting up TURN is beyond this basic example.
-    4.  **Data Channel State:** Check `window.ghostline_debug.getDataChannels()` in the browser console. Are the data channels reaching the `open` state?
-    5.  **Message Broadcasting Logic:** Check the `broadcastMessage` function in `webrtc.ts` and its logs.
+    4.  **Data Channel State:** Check `window.ghostline_debug.getDataChannels()` in the browser console. Are the data channels reaching the `open` state for the intended peers?
+    5.  **Message Broadcasting Logic:** Check the `broadcastMessage` function in `webrtc.ts` and its logs. Are messages being sent? Are there errors during sending?
 
 -   **Dependencies:** Ensure dependencies are installed (`npm install`). Sometimes deleting `node_modules` and `package-lock.json` (or `yarn.lock`) and running `npm install` again helps.
-```# ghost

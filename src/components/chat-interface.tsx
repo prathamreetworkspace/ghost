@@ -18,7 +18,8 @@ interface ChatInterfaceProps {
 
 export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInterfaceProps) {
   const [inputText, setInputText] = useState('');
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null); // Ref for the ScrollArea's viewport
+
 
   const handleSend = () => {
     if (inputText.trim()) {
@@ -34,27 +35,23 @@ export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInte
     }
   };
 
-  // Auto-scroll to bottom
+ // Auto-scroll to bottom when messages change
   useEffect(() => {
-    if (viewportRef.current) {
-        // Use requestAnimationFrame for smoother scrolling after render
-        requestAnimationFrame(() => {
-             if (viewportRef.current) {
-                 viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
-             }
-        });
+    const viewport = scrollAreaRef.current;
+    if (viewport) {
+      // Use requestAnimationFrame to ensure scrolling happens after the DOM update
+      requestAnimationFrame(() => {
+        viewport.scrollTop = viewport.scrollHeight;
+      });
     }
-}, [messages]); // Dependency array includes messages
+  }, [messages]); // Dependency array includes messages
+
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Message Display Area */}
-      <ScrollArea className="flex-1 p-4 bg-muted/20" viewportRef={viewportRef}>
-        {/* Added a key here which changes when messages length changes.
-            This can sometimes help React reset/correct scroll behavior,
-            though it might cause a brief flicker in some cases.
-            Test if this improves the auto-scroll reliability. */}
-        <div className="space-y-4" key={messages.length}>
+      <ScrollArea className="flex-1 p-4 bg-muted/20" viewportRef={scrollAreaRef}>
+        <div className="space-y-4">
           {messages.map((msg) => {
              const isCurrentUser = msg.senderId === currentUser.id;
              const isSystemMessage = msg.senderId === 'system';
@@ -62,7 +59,7 @@ export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInte
              if (isSystemMessage) {
                 return (
                     <div key={msg.id} className="text-center my-2 flex items-center justify-center space-x-2">
-                         <Info className="h-3 w-3 text-muted-foreground" />
+                         <Info className="h-3 w-3 text-muted-foreground flex-shrink-0" /> {/* Added flex-shrink-0 */}
                          <span className="text-xs text-muted-foreground italic px-2 py-0.5">
                             {msg.text}
                             <span className="ml-1 opacity-70">
@@ -92,7 +89,7 @@ export function ChatInterface({ messages, onSendMessage, currentUser }: ChatInte
                     {/* Show sender name only for other users' messages */}
                    {!isCurrentUser && (
                       <span className="text-xs font-semibold mb-1 flex items-center opacity-80 text-primary">
-                        <UserCircle className="h-4 w-4 mr-1 inline-block" />
+                        <UserCircle className="h-4 w-4 mr-1 inline-block flex-shrink-0" /> {/* Added flex-shrink-0 */}
                         {msg.senderName}
                       </span>
                    )}
