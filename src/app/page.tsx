@@ -8,12 +8,16 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { User, MessageCircle, LogOut, Wifi, WifiOff, Loader } from 'lucide-react';
+import { User, MessageCircle, LogOut, Wifi, WifiOff, Loader, AlertTriangle } from 'lucide-react'; // Added AlertTriangle
 import { ChatInterface } from '@/components/chat-interface';
 import * as WebRTC from '@/lib/webrtc'; // Import WebRTC functions
 
 // Define DEFAULT_SIGNALING_URL here as well for the error message
 const DEFAULT_SIGNALING_URL = 'http://localhost:3001';
+
+// Construct the README link dynamically (replace with your actual repo URL if known)
+const README_TROUBLESHOOTING_URL = "https://github.com/YOUR_REPO/ghostline/blob/main/README.md#troubleshooting"; // Placeholder - Update if you have a repo URL
+
 
 export type UserType = {
   id: string;
@@ -153,40 +157,43 @@ export default function Home() {
           let userFriendlyError = error || 'An unexpected error occurred.';
            // Fetch the actual URL being used (consider making this available from webrtc lib if needed)
            const signalingUrlUsed = process.env.NEXT_PUBLIC_SIGNALING_SERVER_URL || DEFAULT_SIGNALING_URL;
-           let troubleshootingAdvice = ` Check the browser console (Network/Console tabs) and **crucially, the signaling server's own console logs** for specific errors (like CORS issues, port conflicts, etc.). Refer to the README for detailed troubleshooting steps.`;
+           let troubleshootingAdvice = ` Check the browser console (Network/Console tabs) and **crucially, the signaling server's own console logs** for specific errors (like CORS issues, port conflicts, etc.). Refer to the <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting Section</a> for detailed steps.`;
 
            // Refine error messages based on keywords passed from webrtc.ts
            if (error.includes('signaling server')) {
                  // Common connection issues
                  if (error.includes('timeout') || error.includes('polling error')) {
                      userFriendlyError = `Connection timeout or polling error with signaling server (${signalingUrlUsed}).`;
-                     troubleshootingAdvice = ` Please ensure the server is running at this exact URL, is accessible from your network, and its CORS configuration allows connections from your origin (${window.location.origin}). Verify the **signaling server logs** for startup or runtime errors. See README troubleshooting.`;
-                 } else if (error.includes('WebSocket connection failed')) {
+                     troubleshootingAdvice = ` **Please ensure the server is running at this exact URL**, is accessible from your network, and its CORS configuration allows connections from your origin (${window.location.origin}). **Verify the signaling server logs** for startup or runtime errors. See <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting</a>.`;
+                 } else if (error.includes('WebSocket connection failed') || error.includes('websocket error')) {
                      userFriendlyError = `WebSocket connection to signaling server failed (${signalingUrlUsed}).`;
-                     troubleshootingAdvice = ` This often means the server isn't running, the URL in your \`.env.local\` (NEXT_PUBLIC_SIGNALING_SERVER_URL) is wrong (or defaulting to ${DEFAULT_SIGNALING_URL}), or a firewall/network issue is blocking the connection. **Check the signaling server logs** first. See README troubleshooting.`;
+                     troubleshootingAdvice = ` This often means the server isn't running, the URL in your \`.env.local\` (NEXT_PUBLIC_SIGNALING_SERVER_URL) is wrong (or defaulting to ${DEFAULT_SIGNALING_URL}), or a firewall/network issue is blocking the connection. **Check the signaling server logs first.** See <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting</a>.`;
                  } else if (error.includes('Connection refused')) {
                      userFriendlyError = `Connection to signaling server refused (${signalingUrlUsed}).`;
-                     troubleshootingAdvice = ` Ensure the signaling server is running on the expected address and port and isn't blocked by a firewall. Check the **signaling server logs** to confirm it started correctly. See README troubleshooting.`;
+                     troubleshootingAdvice = ` Ensure the signaling server is running on the expected address and port and isn't blocked by a firewall. Check the **signaling server logs** to confirm it started correctly. See <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting</a>.`;
                  } else if (error.includes('Server disconnected')) {
                      userFriendlyError = `The signaling server (${signalingUrlUsed}) disconnected you.`;
-                     troubleshootingAdvice = ` Check the **signaling server logs** for the reason. It might have restarted or encountered an internal error. See README troubleshooting.`;
+                     troubleshootingAdvice = ` Check the **signaling server logs** for the reason. It might have restarted or encountered an internal error. See <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting</a>.`;
                  } else {
                      // Generic signaling server error
                      userFriendlyError = `Problem connecting to signaling server (${signalingUrlUsed}): ${error}.`;
-                     troubleshootingAdvice = ` Verify the server is running, the URL (\`.env.local\` or default) is correct, and CORS is configured properly on the server. **Check the signaling server logs** for details. See README troubleshooting.`;
+                     troubleshootingAdvice = ` Verify the server is running, the URL (\`.env.local\` or default) is correct, and CORS is configured properly on the server. **Check the signaling server logs** for details. See <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting</a>.`;
                  }
            } else if (error.includes('peer')) {
                  userFriendlyError = `Problem connecting to a peer: ${error}.`;
-                 troubleshootingAdvice = ` This might be due to network issues (NAT/Firewall) between peers or problems with STUN/TURN servers. Check browser console for specific WebRTC errors. See README troubleshooting.`;
+                 troubleshootingAdvice = ` This might be due to network issues (NAT/Firewall) between peers or problems with STUN/TURN servers. Check browser console for specific WebRTC errors. See <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting</a>.`;
             } else if (error.includes('initialization failed') || error.includes('initialize connection')) {
                  userFriendlyError = `Failed to initialize connection: ${error}`;
-                 troubleshootingAdvice = ` This could be an issue setting up the socket or initial configuration. Check the browser console and **signaling server logs** for more clues. See README troubleshooting.`;
+                 troubleshootingAdvice = ` This could be an issue setting up the socket or initial configuration. Check the browser console and **signaling server logs** for more clues. See <a href="${README_TROUBLESHOOTING_URL}" target="_blank" rel="noopener noreferrer" class="underline hover:text-destructive/80">README Troubleshooting</a>.`;
             }
 
 
           toast({
             title: 'Connection Issue',
-            description: `${userFriendlyError}${troubleshootingAdvice}`,
+             // Use dangerouslySetInnerHTML for the description to render the link
+            description: (
+                <div dangerouslySetInnerHTML={{ __html: `${userFriendlyError}${troubleshootingAdvice}` }} />
+            ),
             variant: 'destructive',
             duration: 15000, // Show connection errors longer
           });
@@ -316,14 +323,26 @@ export default function Home() {
             <CardDescription className="text-center text-muted-foreground">
               Enter a username to join or reconnect.
               {connectionStatus === 'error' && (
-                <p className="text-destructive mt-2 text-sm font-medium"> {/* Added font-medium */}
-                   Connection failed. Error: "{lastErrorRef.current || 'Unknown error'}".
-                   <br /> {/* Line break for better readability */}
-                    Please ensure the <strong className="font-semibold">signaling server</strong> is running, accessible,
-                   and correctly configured (especially CORS).
-                    <br/>
-                   **Check the signaling server's console logs** and your browser's developer console (Network/Console tabs) for specific errors. Refer to the <a href="https://github.com/YOUR_REPO/blob/main/README.md#troubleshooting" target="_blank" rel="noopener noreferrer" className="underline hover:text-destructive/80">README</a> for detailed troubleshooting.
-                 </p>
+                <div className="mt-4 p-3 border border-destructive/50 rounded-md bg-destructive/10 text-destructive text-sm">
+                  <div className="flex items-start space-x-2">
+                     <AlertTriangle className="h-5 w-5 mt-0.5 flex-shrink-0 text-destructive" />
+                     <div className="flex-1 text-left">
+                         <p className="font-semibold">Connection Failed</p>
+                         <p className="mt-1">
+                           Error: "{lastErrorRef.current || 'Unknown error'}".
+                         </p>
+                         <p className="mt-2">
+                           Please ensure the **signaling server** is running, accessible, and correctly configured (especially CORS).
+                         </p>
+                         <p className="mt-1">
+                            **Check the signaling server's console logs** and your browser's developer console (Network/Console tabs) for specific errors.
+                         </p>
+                         <p className="mt-2">
+                            Refer to the <a href={README_TROUBLESHOOTING_URL} target="_blank" rel="noopener noreferrer" className="underline font-medium hover:text-destructive/80">README Troubleshooting Section</a> for detailed steps.
+                         </p>
+                     </div>
+                  </div>
+                </div>
               )}
             </CardDescription>
           </CardHeader>
@@ -350,8 +369,8 @@ export default function Home() {
                    connectionStatus === 'error' ? 'Retry Connection' : 'Join Chat' // Change button text on error
                 )}
             </Button>
-             <p className="text-xs text-center text-muted-foreground">
-                Requires a running <a href="https://github.com/YOUR_REPO/blob/main/README.md#troubleshooting" target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary/80">signaling server</a> with correct URL (check `.env.local`) & CORS setup. See README.
+             <p className="text-xs text-center text-muted-foreground px-2">
+                This app requires a separate <a href={README_TROUBLESHOOTING_URL} target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary/80">signaling server</a> to be running. See README for setup.
              </p>
           </CardContent>
         </Card>

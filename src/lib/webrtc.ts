@@ -172,26 +172,26 @@ export function connect(
         socket.on('connect_error', (error) => {
             console.error('Signaling server connection error:', error.message, error); // Log full error object
             // Provide a more user-friendly error message for the UI callback
-            let errorMessage = `Failed to connect to signaling server (${SIGNALING_SERVER_URL}). `;
-            // Check for common causes and create specific messages
-             if (error.message.includes('xhr poll error') || error.message.includes('timeout') || error.message.includes('transport close')) {
-                 errorMessage += 'Connection timeout or polling error. Check server status and CORS.';
-             } else if (error.message.includes('websocket error')) {
-                 errorMessage += 'WebSocket connection failed. Check **signaling server logs** and network/firewall settings.'; // Keep hint
+            let errorMessage = `Problem connecting to signaling server (${SIGNALING_SERVER_URL}): ${error.message}`;
+
+             // Refine error messages based on keywords
+             if (error.message.includes('xhr poll error') || error.message.includes('timeout')) {
+                 errorMessage = `Connection timeout or polling error with signaling server (${SIGNALING_SERVER_URL}).`;
+             } else if (error.message.includes('websocket error') || error.message.includes('WebSocket connection failed')) {
+                 errorMessage = `WebSocket connection to signaling server failed (${SIGNALING_SERVER_URL}).`;
              } else if (error.message.includes('Connection refused')) {
-                 errorMessage += 'Connection refused. Ensure the server is running and accessible.';
-             } else {
-                errorMessage += `Details: ${error.message}.`;
-            }
-            onErrorCallback(errorMessage); // Inform the UI/user
-            cleanup(); // Clean up resources on failure
-            // *** IMPORTANT: Do NOT reject the promise here ***
-            // Let the calling code know via the onError callback and state change.
-            // Rejecting here leads to unhandled promise rejections in the UI component's async join handler.
-            // Instead of rejecting, we might resolve or do nothing, relying on the error callback
-            // to signal failure to the UI layer. Let's resolve to fulfill the promise contract,
-            // but the UI should check the connectionStatus state set by onErrorCallback.
-            resolve(); // Fulfill promise, but error is signaled via callback
+                 errorMessage = `Connection to signaling server refused (${SIGNALING_SERVER_URL}).`;
+             }
+
+             // Call the UI error handler FIRST
+             onErrorCallback(`Failed to connect to signaling server (${SIGNALING_SERVER_URL}). ${errorMessage}`);
+
+             // Then cleanup resources
+             cleanup();
+
+             // *** IMPORTANT: Do NOT reject the promise here ***
+             // Resolve to fulfill the promise contract, the UI relies on onErrorCallback and state change.
+             resolve();
         });
 
          socket.on('disconnect', (reason, description) => {
@@ -199,17 +199,22 @@ export function connect(
              const wasConnected = _isConnected; // Check state *before* cleanup
              _isConnected = false; // Update state immediately
 
+             // Determine the error message based on the reason
+             let errorReason = reason;
+              if (reason === 'transport close') errorReason = 'Connection lost (transport closed)';
+              else if (reason === 'ping timeout') errorReason = 'Connection timed out (ping timeout)';
+              else if (reason === 'io server disconnect') errorReason = 'Server disconnected you';
+              else if (reason === 'io client disconnect') errorReason = 'You disconnected'; // Explicit local disconnect
+              else errorReason = `Unexpected reason: ${reason}`;
+
              // Only call error callback for *unexpected* disconnects while we thought we were connected
-             if (wasConnected && reason !== 'io client disconnect') { // "io client disconnect" is triggered by calling disconnect() locally
-                let errorReason = reason;
-                 if (reason === 'transport close') errorReason = 'Connection lost (transport closed)';
-                 else if (reason === 'ping timeout') errorReason = 'Connection timed out (ping timeout)';
-                 else if (reason === 'io server disconnect') errorReason = 'Server disconnected you';
-                // Pass a user-friendly error message
-                 onErrorCallback(`Lost connection to signaling server: ${errorReason}. Check server status.`);
+             if (wasConnected && reason !== 'io client disconnect') {
+                 onErrorCallback(`Lost connection to signaling server: ${errorReason}.`);
              }
+
              // Ensure cleanup happens regardless of the reason
              cleanup();
+
              // Notify the UI of disconnection, allowing it to reset state.
              // This is important even for expected disconnects.
              onDisconnectedCallback();
@@ -261,7 +266,7 @@ export function connect(
                  console.log(`Sent answer to ${senderId}`);
              } catch (error: any) {
                  console.error(`Error handling offer from ${senderId}:`, error);
-                 onErrorCallback(`Error processing offer from ${senderName}: ${error.message}`);
+                 onErrorCallback(`Error processing offer from peer ${senderName}: ${error.message}`);
                  closePeerConnection(senderId);
              }
         });
@@ -346,8 +351,7 @@ export function disconnect(): Promise<void> {
              return;
          }
          const wasConnected = _isConnected;
-         _isConnected = false;
-         cleanup();
+         cleanup(); // This handles socket disconnect and peer cleanup
 
          if (wasConnected) {
               onDisconnectedCallback();
@@ -484,12 +488,12 @@ function createPeerConnection(peerId: string, isInitiator: boolean): RTCPeerConn
                 break;
             case 'failed':
                 console.error(`WebRTC connection with ${peerId} failed.`);
-                onErrorCallback(`Connection attempt with a peer failed. Check network or STUN/TURN.`); // Simplified error
+                onErrorCallback(`WebRTC peer connection with a user failed.`); // Simplified error
                 closePeerConnection(peerId);
                 break;
             case 'disconnected':
                 console.warn(`WebRTC connection with peer ${peerId} disconnected. Might recover...`);
-                 onErrorCallback(`Connection with a peer was interrupted.`);
+                 onErrorCallback(`WebRTC connection with a peer was interrupted.`);
                  closePeerConnection(peerId); // Close proactively
                 break;
             case 'closed':
@@ -600,14 +604,14 @@ function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
              console.warn(`Data channel closed for ${peerId}, but peer connection state is still ${pc.connectionState}. Closing PC.`);
              closePeerConnection(peerId);
         } else {
-             console.log(`Data channel closed for ${peerId}. Peer connection already closed or failed.`);
+             // console.log(`Data channel closed for ${peerId}. Peer connection already closed or failed.`);
         }
     };
 
     dc.onerror = (errorEvent) => {
         const error = (errorEvent as any).error;
         console.error(`Data channel error with ${peerId}:`, error?.message || errorEvent);
-        onErrorCallback(`Network data channel error with peer: ${error?.message || 'Unknown error'}`);
+        onErrorCallback(`WebRTC data channel error with peer: ${error?.message || 'Unknown error'}`);
         // Consider closing the connection on data channel errors
         // closePeerConnection(peerId);
     };
@@ -623,7 +627,7 @@ function setupDataChannel(dc: RTCDataChannel, peerId: string): void {
 
             if (message && message.id && message.senderId && message.senderName && message.text && message.timestamp) {
                 if (message.senderId === localUserId) {
-                    console.warn("Ignoring message received from self.");
+                    // console.warn("Ignoring message received from self."); // Can happen briefly during connection setup
                     return;
                 }
                 console.log(`Parsed message received from ${message.senderName} (${peerId}): "${message.text}"`);
@@ -662,7 +666,7 @@ function closePeerConnection(peerId: string): void {
         peers.delete(peerId);
     } else {
         // If PC ref is missing but DC existed, log it.
-        if (dc) console.warn(`Closed lingering data channel for ${peerId}, but PeerConnection reference was already removed.`);
+        // if (dc) console.warn(`Closed lingering data channel for ${peerId}, but PeerConnection reference was already removed.`);
     }
 }
 
